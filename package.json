@@ -1,0 +1,11 @@
+{
+  "name": "netchat-functions",
+  "private": true,
+  "engines": { "node": "20" },
+  "main": "index.js",
+  "dependencies": {
+    "@google/genai": "latest",
+    "firebase-admin": "latest",
+    "firebase-functions": "latest"
+  }
+}

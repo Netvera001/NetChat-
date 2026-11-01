@@ -1,0 +1,1252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="ie=edge">
+  <title>NetChat</title>
+  <link rel="stylesheet" href="css/material-icons.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0">
+  <!-- Google Material Symbols Outlined fallback -->
+
+  <link rel="stylesheet" href="style.css">
+  
+  <link rel="stylesheet" href="netchat-upgrades.css">
+  <link rel="stylesheet" href="voice-note-fix.css">
+  <link rel="stylesheet" href="vera.css">
+
+</head>
+<body>
+
+ 
+ 
+
+ <div class="my-glow firs-light"></div>
+ <div class="my-glow second-light"></div>
+
+
+ 
+ 
+
+
+ <!--- main app------>
+ <main class="main-app">
+    
+  <div class="fixed-top-zone">
+    <header class="app-header">
+      <div class="brand-zone">
+        <h1>NetChat</h1>
+        <span class="pulse-dot"></span>
+      </div> 
+            <div class="header-actions">
+                <button class="icon-btn" aria-label="Search"><span class="material-symbols-outlined">photo_camera</span></button>
+                <button class="icon-btn" id="moreBtn" aria-label="More options"><span class="material-symbols-outlined">tune</span></button>
+            </div>
+    </header>  
+    
+    <section class="search-container">
+      <div class="first-searchbar">
+        <span class="material-symbols-outlined">search</span>
+        <input type="search" id="firstSearchBar" placeholder="Search connections ........">
+      </div>
+    </section>
+  </div>
+
+  <section class="menuside">
+    <nav class="fitter-side">
+      <button class="top-item active">All</button> 
+      <button class="top-item">Unread</button> 
+      <button class="top-item">Favourites</button> 
+      <button class="top-item">Groups</button> 
+    </nav>  
+
+    <section id="chatList" class="chat-house"></section>
+    
+<section id="updatesScreen" class="updates-screen" style="display: none;">
+
+  <!-- STATUS TAB CONTENT -->
+
+  <!-- Privacy shortcut row -->
+  <button class="status-privacy-row" id="privacyRow">
+    <span class="material-symbols-outlined">lock</span>
+    <span>Status privacy</span>
+    <b id="privacyLabel">My contacts</b>
+    <span class="material-symbols-outlined">chevron_right</span>
+  </button>
+
+  <!-- MY STATUS CARD -->
+  <div class="my-status-card" id="myStatusCard">
+    <div class="my-status-avatar" id="myStatusAvatar">
+      <img src="default-avatar.png" alt="me" id="myAvatarImg">
+
+      <div class="status-add-icon" id="addStatusBtn" title="Add status">
+        <span class="material-symbols-outlined">add</span>
+      </div>
+    </div>
+
+    <div class="my-status-info">
+      <h3 id="myStatusTitle">My status</h3>
+      <p id="myStatusSub">Tap to add a status update</p>
+    </div>
+
+    <span class="material-symbols-outlined status-chevron" id="myStatusChevron">
+      chevron_right
+    </span>
+  </div>
+
+  <!-- RECENT UPDATES -->
+  <div class="status-section" id="recentSection">
+    <div class="status-section-title">
+      <i></i>Recent updates
+    </div>
+
+    <div id="recentList"></div>
+  </div>
+
+  <!-- VIEWED UPDATES -->
+  <div class="status-section" id="viewedSection">
+    <div class="status-section-title muted">
+      <i></i>Viewed updates
+    </div>
+
+    <div id="viewedList"></div>
+  </div>
+
+  <div class="security-stamp">
+    <span class="material-symbols-outlined">lock</span>
+    <p>Status updates use your privacy settings</p>
+  </div>
+
+
+  <!-- CREATE STATUS SHEET -->
+  <div class="sheet-backdrop" id="createSheetBk"></div>
+
+  <div class="create-sheet" id="createSheet">
+    <div class="sheet-grab"></div>
+
+    <h3>Create status</h3>
+
+    <div class="create-opts">
+
+      <button class="create-opt nx-t-violet" data-mode="text">
+        <div class="create-opt-ic">
+          <span class="material-symbols-outlined">edit</span>
+        </div>
+
+        <b>Text</b>
+        <small>Type a text status</small>
+      </button>
+
+      <button class="create-opt nx-t-cyan" data-mode="image">
+        <div class="create-opt-ic">
+          <span class="material-symbols-outlined">photo_camera</span>
+        </div>
+
+        <b>Photo</b>
+        <small>Camera or gallery</small>
+      </button>
+
+      <button class="create-opt nx-t-pink" data-mode="video">
+        <div class="create-opt-ic">
+          <span class="material-symbols-outlined">videocam</span>
+        </div>
+
+        <b>Video</b>
+        <small>Record or pick</small>
+      </button>
+
+    </div>
+
+    <button class="sheet-cancel" id="createSheetCancel">
+      Cancel
+    </button>
+  </div>
+
+
+  <!-- COMPOSER -->
+  <div class="create-status-screen" id="composer">
+
+    <div class="create-status-header">
+      <button class="status-icon-btn" id="composerClose">
+        <span class="material-symbols-outlined">close</span>
+      </button>
+
+      <h2 id="composerTitle">New text status</h2>
+    </div>
+
+
+    <!-- TEXT MODE -->
+    <div class="create-status-body" id="textMode">
+
+      <div class="status-text-stage" id="textStage">
+
+        <textarea
+          id="statusText"
+          maxlength="700"
+          placeholder="Type a status…"
+        ></textarea>
+
+        <span class="char-count" id="charCount">
+          0/700
+        </span>
+
+      </div>
+
+      <div class="bg-chips" id="bgChips"></div>
+
+    </div>
+
+
+    <!-- PHOTO / VIDEO MODE -->
+    <div class="create-status-body media" id="mediaMode" hidden>
+
+      <div class="media-preview" id="mediaPreview"></div>
+
+      <input
+        type="text"
+        id="mediaCaption"
+        placeholder="Add a caption…"
+        maxlength="300"
+      >
+
+    </div>
+
+
+    <div class="create-status-footer">
+
+      <button class="post-status-btn" id="postStatusBtn">
+
+        <span>Post status</span>
+
+        <span class="material-symbols-outlined">
+          send
+        </span>
+
+      </button>
+
+    </div>
+
+  </div>
+
+
+  <!-- STATUS VIEWER -->
+  <div class="status-viewer" id="viewer">
+
+    <div class="v-progress" id="vProgress"></div>
+
+    <div class="v-header">
+
+      <button class="v-close" id="vClose">
+        <span class="material-symbols-outlined">
+          arrow_downward
+        </span>
+      </button>
+
+      <div class="v-user" id="vUser"></div>
+
+      <span class="v-time" id="vTime"></span>
+
+    </div>
+
+
+    <div class="v-stage" id="vStage">
+
+      <div class="v-tap-zone left"></div>
+
+      <div class="v-tap-zone right"></div>
+
+      <div class="v-hold-hint" id="vHoldHint">
+        <span class="material-symbols-outlined">
+          pause
+        </span>
+
+        Hold to pause
+      </div>
+
+    </div>
+
+
+    <div class="v-caption" id="vCaption"></div>
+
+
+    <!-- OWN STATUS TOOLS -->
+    <div class="v-toolbar" id="vToolbar">
+
+      <button class="v-tool" id="vViewersBtn">
+        <span class="material-symbols-outlined">
+          visibility
+        </span>
+
+        <b id="vViewCount">0</b>
+      </button>
+
+      <button class="v-tool" id="vAddMoreBtn">
+        <span class="material-symbols-outlined">
+          add_circle
+        </span>
+      </button>
+
+      <button class="v-tool" id="vRepostBtn">
+        <span class="material-symbols-outlined">
+          replay
+        </span>
+      </button>
+
+      <button class="v-tool danger" id="vDeleteBtn">
+        <span class="material-symbols-outlined">
+          delete
+        </span>
+      </button>
+
+    </div>
+
+  </div>
+
+
+  <!-- VIEWERS SHEET -->
+  <div class="sheet-backdrop" id="viewersBk"></div>
+
+  <div class="viewers-sheet" id="viewersSheet">
+
+    <div class="sheet-grab"></div>
+
+    <h3>
+      <span class="material-symbols-outlined">
+        visibility
+      </span>
+
+      Viewed by <b id="viewersCount">0</b>
+    </h3>
+
+    <div class="viewers-list" id="viewersList"></div>
+
+  </div>
+
+
+  <!-- PRIVACY SHEET -->
+  <div class="sheet-backdrop" id="privacyBk"></div>
+
+  <div class="viewers-sheet" id="privacySheet">
+
+    <div class="sheet-grab"></div>
+
+    <h3>
+      <span class="material-symbols-outlined">
+        lock
+      </span>
+
+      Status privacy
+    </h3>
+
+    <div class="privacy-opts" id="privacyOpts">
+
+      <label class="privacy-opt">
+
+        <input type="radio" name="privacy" value="contacts">
+
+        <span class="po-ic nx-t-cyan">
+          <span class="material-symbols-outlined">
+            group
+          </span>
+        </span>
+
+        <span class="po-meta">
+          <b>My contacts</b>
+          <small>Share with all my contacts</small>
+        </span>
+
+        <span class="po-tick material-symbols-outlined">
+          check_circle
+        </span>
+
+      </label>
+
+
+      <label class="privacy-opt">
+
+        <input type="radio" name="privacy" value="except">
+
+        <span class="po-ic nx-t-violet">
+          <span class="material-symbols-outlined">
+            person_remove
+          </span>
+        </span>
+
+        <span class="po-meta">
+          <b>My contacts except…</b>
+          <small>Hide from selected contacts</small>
+        </span>
+
+        <span class="po-tick material-symbols-outlined">
+          check_circle
+        </span>
+
+      </label>
+
+
+      <label class="privacy-opt">
+
+        <input type="radio" name="privacy" value="only">
+
+        <span class="po-ic nx-t-pink">
+          <span class="material-symbols-outlined">
+            person_add
+          </span>
+        </span>
+
+        <span class="po-meta">
+          <b>Only share with…</b>
+          <small>Pick specific contacts</small>
+        </span>
+
+        <span class="po-tick material-symbols-outlined">
+          check_circle
+        </span>
+
+      </label>
+
+    </div>
+
+  </div>
+
+
+  <!-- DELETE CONFIRMATION -->
+  <div class="modal-backdrop nx-logout" id="confirmBk">
+
+    <div class="nx-confirm">
+
+      <div class="warn-ic">
+        <span class="material-symbols-outlined">
+          delete
+        </span>
+      </div>
+
+      <h3>Delete this status?</h3>
+
+      <p>
+        This update will be removed for everyone immediately.
+        This can't be undone.
+      </p>
+
+      <div class="btn-row">
+
+        <button class="nx-btn ghost" id="confirmNo">
+          Cancel
+        </button>
+
+        <button class="nx-btn danger" id="confirmYes">
+          Delete
+        </button>
+
+      </div>
+
+    </div>
+
+  </div>
+
+
+  <div class="toast nx-toast" id="toast"></div>
+
+</section>
+    
+    
+    <div class="security-stamp">
+      <span class="material-symbols-outlined">verified_user</span>
+      <p>Protected by Firebase access controls</p>
+    </div>
+  </section>
+
+  <!-- Bottom Navigation Bar -->
+  <nav class="bottom-nav" aria-label="Primary navigation">
+    <button type="button" class="nav-item active" id="chatsNavBtn">
+      <div class="icon-wrapper">
+        <span class="material-symbols-outlined">chat</span>
+      </div>
+      <span class="nav-label">Chats</span>
+    </button>
+
+    <button type="button" class="nav-item" id="updatesNavBtn">
+      <div class="icon-wrapper">
+        <span class="material-symbols-outlined">donut_large</span>
+      </div>
+      <span class="nav-label">Updates</span>
+    </button>
+
+    <button type="button" class="nav-item" id="communitiesNavBtn">
+      <div class="icon-wrapper">
+        <span class="material-symbols-outlined">groups</span>
+      </div>
+      <span class="nav-label">Communities</span>
+    </button>
+
+    <button type="button" class="nav-item" id="callsNavBtn">
+      <div class="icon-wrapper">
+        <span class="material-symbols-outlined">call</span>
+      </div>
+      <span class="nav-label">Calls</span>
+    </button>
+  </nav>
+  
+  
+  
+  
+  <!-- ⋮ QUICK MENU -->
+<div class="nx-backdrop" id="nxBackdrop"></div>
+<div class="menu-pop" id="menuPop" role="menu">
+    <div class="menu-tag">Quick Actions</div>
+    <button class="mi nx-t-cyan"    data-act="newGroup"><span class="mi-ic"><span class="material-symbols-outlined">group</span></span><span class="mi-txt">New Group</span><span class="mi-hint">⌘G</span></button>
+    <button class="mi nx-t-violet"  data-act="broadcast"><span class="mi-ic"><span class="material-symbols-outlined">campaign</span></span><span class="mi-txt">Broadcast</span></button>
+    <button class="mi nx-t-amber"   data-act="starred"><span class="mi-ic"><span class="material-symbols-outlined">star</span></span><span class="mi-txt">Starred Messages</span></button>
+    <button class="mi nx-t-purple" data-act="achievements"><span class="mi-ic"><span class="material-symbols-outlined">emoji_events</span></span><span class="mi-txt">Achievements</span></button>
+    <button class="mi nx-t-emerald" data-act="markRead"><span class="mi-ic"><span class="material-symbols-outlined">done_all</span></span><span class="mi-txt">Mark All as Read</span></button>
+    <button class="mi nx-t-blue"    data-act="linkedDevices"><span class="mi-ic"><span class="material-symbols-outlined">devices</span></span><span class="mi-txt">Linked Devices</span></button>
+    <button class="mi nx-t-pink"    data-act="settings"><span class="mi-ic"><span class="material-symbols-outlined">settings</span></span><span class="mi-txt">Settings</span></button>
+</div>
+
+  
+  <!-- ⚙️ SETTINGS PAGE -->
+<section class="settings-page" id="settingsPage">
+    <header class="set-head">
+        <button class="icon-btn" id="setBack" aria-label="Back"><span class="material-symbols-outlined">arrow_back</span></button>
+        <h2>Settings</h2>
+        <span class="head-dot" id="mainTintDot"></span>
+    </header>
+
+    <div class="set-body">
+        
+        <!-- Profile hero -->
+        <div class="hero-card">
+            <button class="hero-edit" data-sub="profile">Edit</button>
+            <div class="hero-row">
+                <div class="hero-avatar">
+<img id="profileImage" src="">
+
+<div class="in" style="display: none;">
+    <span class="material-symbols-outlined">person</span>
+</div>
+
+                    <span class="cam"><span class="material-symbols-outlined" id="cameraIcon">photo_camera</span><input type="file" id="fileInput" accept="image/*" capture="environment" style="display: none;">
+</span>
+                </div>
+                <div class="hero-meta">
+                    <h3 id="profileName"></h3>
+                    <p id="netchatId"><span style="opacity:.6">ID</span> <b id="netchatIdValue"></b>
+                        <button class="hero-copy" id="copyId" aria-label="Copy ID"><span class="material-symbols-outlined" style="font-size:14px">content_copy</span></button>
+                    </p>
+                </div>
+            </div>
+            <div class="hero-presence"><i></i> Online — last seen just now</div>
+<div class="bio-card">
+  <span class="bio-label">BIO</span>
+  <p id="bio" class="myBio"></p>
+</div>
+
+        </div>
+
+
+        <!-- Profile -->
+    <div class="set-sec nx-t-cyan">Profile</div>
+    <div class="set-group">
+    <button class="set-row nx-t-cyan" data-sub="profile">
+    <span class="ic"> 
+                <span class="material-symbols-outlined">person</span>
+                </span>
+                <span
+                class="meta"><b id="myProfile">My Profile</b><small>How you appear to others</small></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+            <button class="set-row nx-t-violet" data-action="editProfile"><span class="ic"><span class="material-symbols-outlined">edit</span></span><span class="meta"><b>Edit Profile</b><small>Name, about, signature</small></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+            <button class="set-row nx-t-pink" data-action="changeProfilePicture"><span class="ic"><span class="material-symbols-outlined">photo_camera</span></span><span class="meta"><b>Change Profile Picture</b></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+            <button class="set-row nx-t-blue" id="viewIdRow" data-action="viewNetChatID"><span class="ic"><span class="material-symbols-outlined">badge</span></span><span class="meta"><b>View NetChat ID</b><small id="settingsNetchatId"></small></span><span class="trail"><span class="material-symbols-outlined">content_copy</span></span></button>
+        </div>
+
+        <!-- Account -->
+        <div class="set-sec nx-t-violet"><i></i>Account</div>
+        <div class="set-group">
+            <button class="set-row nx-t-violet" data-sub="account"><span class="ic"><span class="material-symbols-outlined">shield_person</span></span><span class="meta"><b>Account Information</b><small>Security & sessions</small></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+            <button class="set-row nx-t-violet" data-sub="account"><span class="ic"><span class="material-symbols-outlined">mail</span></span><span class="meta"><b>Email</b><small id="settingsEmail">Account email</small></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+            <button class="set-row nx-t-violet" data-sub="account"><span class="ic"><span class="material-symbols-outlined">password</span></span><span class="meta"><b>Change Password</b></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+        </div>
+
+        <!-- Privacy -->
+        <div class="set-sec nx-t-pink"><i></i>Privacy</div>
+        <div class="set-group">
+            <button class="set-row nx-t-pink" data-sub="privacy"><span class="ic"><span class="material-symbols-outlined">lock</span></span><span class="meta"><b>Privacy</b><small>Last seen, receipts, blocking</small></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+            <button class="set-row nx-t-pink" data-sub="privacy"><span class="ic"><span class="material-symbols-outlined">block</span></span><span class="meta"><b>Blocked Users</b><small>Manage blocked accounts</small></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+            <button class="set-row nx-t-pink" data-sub="privacy"><span class="ic"><span class="material-symbols-outlined">group_add</span></span><span class="meta"><b>Group Invitations</b></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+        </div>
+
+        <!-- Chats -->
+        <div class="set-sec nx-t-emerald"><i></i>Chats</div>
+        <div class="set-group">
+            <button class="set-row nx-t-emerald" data-sub="chats"><span class="ic"><span class="material-symbols-outlined">chat_bubble</span></span><span class="meta"><b>Chat Settings</b></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+            <button class="set-row nx-t-emerald" data-sub="chats"><span class="ic"><span class="material-symbols-outlined">wallpaper</span></span><span class="meta"><b>Chat Wallpaper</b><small>Midnight Neon</small></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+            <button class="set-row nx-t-emerald" data-sub="chats"><span class="ic"><span class="material-symbols-outlined">archive</span></span><span class="meta"><b>Archived Chats</b><small>Archive and restore conversations</small></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+            <button class="set-row nx-t-emerald" data-sub="starred"><span class="ic"><span class="material-symbols-outlined">star</span></span><span class="meta"><b>Starred Messages</b><small>Saved across your chats</small></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+            <button class="set-row nx-t-emerald" data-sub="chats"><span class="ic"><span class="material-symbols-outlined">cloud_upload</span></span><span class="meta"><b>Export Chat Data</b><small>Download account and chat metadata</small></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+        </div>
+
+        <!-- Notifications -->
+        <div class="set-sec nx-t-amber"><i></i>Notifications</div>
+        <div class="set-group">
+            <button class="set-row nx-t-amber" data-sub="notifications"><span class="ic"><span class="material-symbols-outlined">notifications</span></span><span class="meta"><b>Notifications</b><small>Messages, groups, sounds</small></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+        </div>
+
+        <!-- Appearance -->
+        <div class="set-sec nx-t-purple"><i></i>Appearance</div>
+        <div class="set-group">
+            <button class="set-row nx-t-purple" data-sub="appearance"><span class="ic"><span class="material-symbols-outlined">palette</span></span><span class="meta"><b>Theme</b><small>Midnight Neon</small></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+            <button class="set-row nx-t-purple" data-sub="appearance"><span class="ic"><span class="material-symbols-outlined">format_color_fill</span></span><span class="meta"><b>Chat Appearance</b></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+            <button class="set-row nx-t-purple" data-sub="appearance"><span class="ic"><span class="material-symbols-outlined">format_size</span></span><span class="meta"><b>Font Size</b><small>Default</small></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+        </div>
+
+        <!-- Storage & Data -->
+        <div class="set-sec nx-t-blue"><i></i>Storage &amp; Data</div>
+        <div class="set-group">
+            <button class="set-row nx-t-blue" data-sub="storage"><span class="ic"><span class="material-symbols-outlined">storage</span></span><span class="meta"><b>Storage Usage</b><small>Calculate from attachment metadata</small></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+            <button class="set-row nx-t-blue" data-sub="storage"><span class="ic"><span class="material-symbols-outlined">download</span></span><span class="meta"><b>Media Auto-Download</b><small>Device preference</small></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+            <button class="set-row nx-t-blue" data-sub="storage"><span class="ic"><span class="material-symbols-outlined">query_stats</span></span><span class="meta"><b>Data Usage</b></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+        </div>
+
+        <!-- Groups & Connections -->
+        <div class="set-sec nx-t-green"><i></i>Groups &amp; Connections</div>
+        <div class="set-group">
+            <button class="set-row nx-t-green" data-sub="groups"><span class="ic"><span class="material-symbols-outlined">groups</span></span><span class="meta"><b>Group Settings</b></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+            <button class="set-row nx-t-green" data-sub="groups"><span class="ic"><span class="material-symbols-outlined">hub</span></span><span class="meta"><b>Connections</b><small>Communities and members</small></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+            <button class="set-row nx-t-green" data-sub="groups"><span class="ic"><span class="material-symbols-outlined">block</span></span><span class="meta"><b>Blocked Users</b><small>Manage blocked accounts</small></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+        </div>
+
+        <!-- Help & Support -->
+        <div class="set-sec nx-t-sky"><i></i>Help &amp; Support</div>
+        <div class="set-group">
+            <button class="set-row nx-t-sky" data-sub="help"><span class="ic"><span class="material-symbols-outlined">help</span></span><span class="meta"><b>Help Center</b></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+            <button class="set-row nx-t-sky" data-sub="help"><span class="ic"><span class="material-symbols-outlined">support_agent</span></span><span class="meta"><b>Contact NetChat Support</b></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+            <button class="set-row nx-t-sky" data-sub="help"><span class="ic"><span class="material-symbols-outlined">flag</span></span><span class="meta"><b>Report a Problem</b></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+        </div>
+
+        <!-- About -->
+        <div class="set-sec nx-t-slate"><i></i>About</div>
+        <div class="set-group">
+            <button class="set-row nx-t-slate" data-sub="about"><span class="ic"><span class="material-symbols-outlined">info</span></span><span class="meta"><b>About NetChat</b></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+            <button class="set-row nx-t-slate" data-sub="about"><span class="ic"><span class="material-symbols-outlined">deployed_code</span></span><span class="meta"><b>Version</b><small>v2.4.1</small></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+            <button class="set-row nx-t-slate" data-sub="about"><span class="ic"><span class="material-symbols-outlined">gavel</span></span><span class="meta"><b>Terms of Service</b></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+            <button class="set-row nx-t-slate" data-sub="about"><span class="ic"><span class="material-symbols-outlined">shield</span></span><span class="meta"><b>Privacy Policy</b></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
+        </div>
+
+        <!-- Logout -->
+        <div class="logout-zone">
+            <button class="logout-btn" id="logoutBtn"><span class="material-symbols-outlined">logout</span>Log Out</button>
+            <p class="set-foot-note">NetChat v2.4.1 · crafted with neon ✦</p>
+        </div>
+    </div>
+
+    <!-- generic sub-page (populated by JS) -->
+    <section class="sub-page" id="subPage">
+        <header class="set-head">
+            <button class="icon-btn" id="subBack" aria-label="Back"><span class="material-symbols-outlined">arrow_back</span></button>
+            <h2 id="subHeadTitle">Page</h2>
+            <span class="head-dot" id="subTintDot"></span>
+        </header>
+        <div class="sub-body" id="subBody"></div>
+    </section>
+</section>
+
+<!-- Logout confirm -->
+<div class="modal-backdrop nx-logout" id="logoutModal">
+    <div class="nx-confirm">
+        <div class="warn-ic"><span class="material-symbols-outlined">logout</span></div>
+        <h3>Log out of NetChat?</h3>
+        <p>You'll stop receiving messages until you sign back in. Your chats stay safe on this device.</p>
+        <div class="btn-row">
+            <button class="nx-btn ghost" id="logoutCancel">Cancel</button>
+            <button class="nx-btn danger" id="logoutConfirm">Log Out</button>
+        </div>
+    </div>
+</div>
+
+<div class="toast nx-toast" id="nxToast"></div>
+
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+<div class="fab-wrapper" id="fabWrapper">
+  <!-- Backdrop click catcher to close when tapping outside -->
+  <div class="fab-backdrop" id="fabBackdrop"></div>
+
+  <!-- Expandable Search Input Card -->
+  <div class="fab-search-card" id="fabSearchCard">
+    <span class="material-symbols-outlined search-icon">search</span>
+    <input 
+      type="text" 
+      id="userSearchingInput" 
+      placeholder="Search users..." 
+      autocomplete="off"
+    />
+    <button class="close-search-btn" id="closeSearchBtn" aria-label="Close search">
+      <span class="material-symbols-outlined">close</span>
+    </button>
+  </div>
+
+  <!-- Floating Action Button -->
+  <button class="fab-btn" id="fabBtn" aria-label="New Chat">
+    <span class="material-symbols-outlined fab-icon">add</span>
+  </button>
+</div>
+
+
+
+
+<!-- Hidden Profile Modal Card & Backdrop -->
+<div class="profile-modal-backdrop" id="profileBackdrop"></div>
+
+<div class="user-profile-card" id="userProfileModal">
+  <button class="close-card-btn" id="closeProfileModal" aria-label="Close">
+    <span class="material-symbols-outlined">close</span>
+  </button>
+
+  <div class="profile-header">
+    <div class="avatar-container">
+      <img 
+        src="default-avatar.png" 
+        alt="User Avatar" 
+        class="profile-avatar"
+        id="modalUserAvatar"
+      />
+      <span class="status-indicator online"></span>
+    </div>
+    
+    <div class="netchat-id-badge">
+      <span class="id-label">ID</span>
+      <span class="id-number" id="modalNetchatId">NC26548129116</span>
+      <span class="material-symbols-outlined copy-icon">content_copy</span>
+    </div>
+  </div>
+
+  <div class="profile-info">
+    <h2 class="user-name" id="modalUserName">User Name</h2>
+    <p class="user-bio" id="modalUserBio">No bio available yet.</p>
+  </div>
+
+  <!-- 4-Column Action Grid -->
+  <div class="profile-actions">
+    <button class="action-btn" id="btnMessage" aria-label="Message">
+      <span class="material-symbols-outlined">chat_bubble</span>
+      <span class="btn-label">Message</span>
+    </button>
+
+    <button class="action-btn" id="btnVoiceCall" aria-label="Voice Call">
+      <span class="material-symbols-outlined">call</span>
+      <span class="btn-label">Voice Call</span>
+    </button>
+
+    <button class="action-btn" id="btnVideoCall" aria-label="Video Call">
+      <span class="material-symbols-outlined">videocam</span>
+      <span class="btn-label">Video Call</span>
+    </button>
+    
+    <button class="action-btn highlight-action" id="btnAddContact" aria-label="Add Contact">
+      <span class="material-symbols-outlined">person_add</span>
+      <span class="btn-label">Add Contact</span>
+    </button>
+  </div>
+</div>
+
+
+
+
+
+
+
+
+
+<section class="chat-screen" id="chatScreen">
+  <!-- Top Active Chat Header -->
+  <header class="chat-header">
+    <button class="icon-btn" id="closeChatBtn" aria-label="Back">
+      <span class="material-symbols-outlined">arrow_back</span>
+    </button>
+    
+    <div class="chat-user-info" id="chatHeaderUser">
+      <div class="chat-avatar-wrapper">
+        <img src="default-avatar.png" id="chatUserAvatar" alt="User Avatar" />
+        <span class="status-dot online"></span>
+      </div>
+
+      <div class="chat-user-meta">
+        <h3 id="chatUserName">lify nworu</h3>
+        <p id="chatUserStatus">last seen 19:22</p>
+      </div>
+    </div>
+
+    <div class="chat-header-actions">
+      <button class="members-btn" id="groupMembersBtn" type="button" aria-label="View group members" hidden><span class="material-symbols-outlined">group</span><span>Members</span></button>
+      <button class="icon-btn" id="startCallBtn" aria-label="Video Call">
+        <span class="material-symbols-outlined">videocam</span>
+      </button>
+
+      <button class="icon-btn" id="startVoiceCallBtn" aria-label="Voice Call">
+        <span class="material-symbols-outlined">call</span>
+      </button>
+
+<div class="menu-container">
+  <button class="icon-btn" id="chatMenuBtn" aria-label="More Options">
+    <span class="material-symbols-outlined">more_vert</span>
+  </button>
+
+  <!-- Single Dropdown Container -->
+  <div class="chat-dropdown" id="chatDropdown">
+    
+    <!-- View 1: Main Menu -->
+    <ul class="menu-list" id="mainMenuView">
+      <li class="menu-item"><span class="material-symbols-outlined">group_add</span> New group</li>
+<li class="menu-item" id="viewContactBtn">
+  <span class="material-symbols-outlined">person</span>
+  View contact
+</li>
+      <li class="menu-item"><span class="material-symbols-outlined">search</span> Search</li>
+      <li class="menu-item"><span class="material-symbols-outlined">perm_media</span> Media, links, and docs</li>
+      <li class="menu-item"><span class="material-symbols-outlined">notifications_off</span> Mute notifications</li>
+      <li class="menu-item"><span class="material-symbols-outlined">timer</span> Disappearing messages</li>
+      <li class="menu-item"><span class="material-symbols-outlined">palette</span> Chat theme</li>
+      <li class="menu-item" id="openMoreBtn">
+        <div class="menu-item-content">
+          <span class="material-symbols-outlined">more_horiz</span> More
+        </div>
+        <span class="material-symbols-outlined arrow">chevron_right</span>
+      </li>
+    </ul>
+
+    <!-- View 2: Submenu (Hidden by default) -->
+    <ul class="menu-list hidden" id="moreMenuView">
+      <li class="menu-item menu-back-btn" id="backToMainMenuBtn">
+        <span class="material-symbols-outlined">arrow_back</span>
+        <span class="back-title">More Options</span>
+      </li>
+      <li class="menu-item danger"><span class="material-symbols-outlined">report</span> Report</li>
+      <li class="menu-item danger"><span class="material-symbols-outlined">block</span> Block</li>
+      <li class="menu-item danger"><span class="material-symbols-outlined">delete_sweep</span> Clear chat</li>
+      <li class="menu-item"><span class="material-symbols-outlined">output</span> Export chat</li>
+      <li class="menu-item"><span class="material-symbols-outlined">shortcut</span> Add shortcut</li>
+      <li class="menu-item"><span class="material-symbols-outlined">playlist_add</span> Add to list</li>
+    </ul>
+
+  </div>
+</div>
+
+
+    </div>
+  </header>
+
+
+  <!-- Messages Body -->
+  <div class="chat-messages-body" id="chatMessagesBody">
+    
+    <!-- Security Encryption Notice -->
+    <div class="security-banner">
+      <span class="material-symbols-outlined">lock</span>
+
+      <p>
+        Messages are protected by Firebase access rules. Media is uploaded to Cloudinary. Only chat participants can read this conversation.
+      </p>
+    </div>
+    
+  </div>
+
+<div id="chatMediaPreview" class="chat-media-preview" hidden>
+  <div id="chatMediaPreviewList" class="chat-media-preview-list"></div>
+</div>
+
+<div id="chatMediaViewer" class="chat-media-viewer" hidden>
+  <button
+    type="button"
+    id="chatMediaViewerClose"
+    class="chat-media-viewer-close"
+    aria-label="Close media viewer"
+  >
+    <span class="material-symbols-outlined">close</span>
+  </button>
+
+  <div
+    id="chatMediaViewerContent"
+    class="chat-media-viewer-content"
+  ></div>
+
+  <div
+    id="chatMediaViewerCounter"
+    class="chat-media-viewer-counter"
+  ></div>
+</div>
+  <!-- Bottom Message Input Bar -->
+
+<footer class="chat-input-bar">
+
+  <div class="input-area">
+
+    <div id="replyPreview" class="reply-preview" style="display: none;">
+      <div class="reply-preview-content">
+        <span class="material-symbols-outlined">reply</span>
+
+        <div>
+          <small>Replying to</small>
+          <p id="replyPreviewText"></p>
+        </div>
+      </div>
+
+      <button id="cancelReplyBtn" type="button" aria-label="Cancel reply">
+        <span class="material-symbols-outlined">close</span>
+      </button>
+    </div>
+
+<div class="input-glass-pill">
+  <!-- Textarea sits at the top and expands downward -->
+  <textarea
+    id="messageInput"
+    placeholder="Message..."
+    rows="1"
+    autocomplete="off"
+  ></textarea>
+
+  <!-- Bottom row holding left icons and the send button on the right -->
+  <div class="input-actions-row">
+    <div class="input-actions-left">
+      <button type="button" class="input-icon-btn" id="emojiBtn" aria-label="Emoji">
+        <span class="material-symbols-outlined">sentiment_satisfied</span>
+      </button>
+
+      <button type="button" class="input-icon-btn" id="attachFileBtn" aria-label="Attach File">
+        <span class="material-symbols-outlined">attach_file</span>
+      </button>
+
+      <button
+        type="button"
+        class="input-icon-btn"
+        id="chatImageBtn"
+        aria-label="Camera"
+      >
+        <span class="material-symbols-outlined">photo_camera</span>
+      </button>
+
+      <button
+        type="button"
+        class="input-icon-btn"
+        id="chatGalleryBtn"
+        aria-label="Gallery"
+      >
+        <span class="material-symbols-outlined">image</span>
+      </button>
+    </div>
+
+    <!-- Send button moved inside the bottom row for proper alignment -->
+    <button class="send-action-btn" id="sendMsgBtn" aria-label="Send Message">
+      <span class="material-symbols-outlined">send</span>
+    </button>
+  </div>
+
+  <!-- Hidden file inputs -->
+  <input type="file" id="chatImageInput" accept="image/*" capture="environment" hidden>
+  <input type="file" id="chatGalleryInput" accept="image/*,video/*" multiple hidden>
+</div>
+
+  </div>
+
+
+
+
+
+
+</footer>
+</section>
+
+<!-- ================================================== -->
+<!-- NETCHAT SYSTEM INBOX                               -->
+<!-- ================================================== -->
+
+<section class="netchat-system-screen" id="netChatSystemScreen">
+
+  <header class="netchat-system-header">
+
+    <button class="icon-btn" id="closeNetChatSystemBtn" aria-label="Back">
+      <span class="material-symbols-outlined">arrow_back</span>
+    </button>
+
+    <div class="netchat-system-title">
+      <div class="netchat-system-avatar">
+        <span class="material-symbols-outlined">verified</span>
+      </div>
+
+      <div>
+        <h3>NetChat</h3>
+        <p>Official system messages</p>
+      </div>
+    </div>
+
+  </header>
+
+
+  <div class="netchat-system-body" id="netChatSystemBody">
+
+    <!-- System items will be rendered here by JavaScript -->
+
+  </div>
+
+</section>
+
+<!-- ================================================== -->
+<!-- GLOBAL VIDEO CALL UI                               -->
+<!-- ================================================== -->
+
+<!-- Video Call Screen Overlay -->
+<div id="videoCallScreen" class="video-call-screen" style="display: none;">
+
+  <div class="video-container">
+
+    <!-- Remote Video -->
+    <video
+      id="remoteVideo"
+      autoplay
+      playsinline
+      class="remote-video"
+    ></video>
+
+    <!-- Local Video -->
+    <video
+      id="localVideo"
+      autoplay
+      playsinline
+      muted
+      class="local-video"
+    ></video>
+
+    <!-- Call Header Info -->
+    <div class="call-header">
+
+      <img
+        id="callUserAvatar"
+        src="default-avatar.png"
+        alt="Avatar"
+      >
+
+      <h3 id="callUserName">NetChat User</h3>
+
+      <span id="callStatusText">Calling...</span>
+
+    </div>
+
+
+    <!-- Call Controls -->
+    <div class="call-controls">
+
+      <button id="minimizeCallBtn" class="call-btn">
+        <span class="material-symbols-outlined">
+          keyboard_arrow_down
+        </span>
+      </button>
+
+      <button id="toggleMicBtn" class="call-btn">
+        <span class="material-symbols-outlined">
+          mic
+        </span>
+      </button>
+
+      <button id="endCallBtn" class="call-btn end-call">
+        <span class="material-symbols-outlined">
+          call_end
+        </span>
+      </button>
+
+      <button id="toggleCameraBtn" class="call-btn">
+        <span class="material-symbols-outlined">
+          videocam
+        </span>
+      </button>
+
+    </div>
+
+  </div>
+
+</div>
+
+
+<!-- Incoming Call Notification Modal -->
+<div
+  id="incomingCallModal"
+  class="incoming-call-modal"
+  style="display: none;"
+>
+
+  <div class="incoming-call-content">
+
+    <img
+      id="callerAvatar"
+      src="default-avatar.png"
+      alt="Caller Avatar"
+    >
+
+    <h3 id="callerName">User Name</h3>
+
+    <p>Incoming Video Call...</p>
+
+    <div class="incoming-actions">
+
+      <button
+        id="acceptCallBtn"
+        class="call-action-btn accept"
+      >
+        <span class="material-symbols-outlined">call</span>
+        Accept
+      </button>
+
+      <button
+        id="rejectCallBtn"
+        class="call-action-btn reject"
+      >
+        <span class="material-symbols-outlined">call_end</span>
+        Decline
+      </button>
+
+    </div>
+
+  </div>
+
+</div>
+
+
+
+
+
+
+
+<!-- ============================================================
+     1. WHATSAPP-STYLE VERTICAL MEDIA FEED MODAL
+     ============================================================ -->
+<div id="mediaFeedModal" class="media-feed-modal" hidden>
+  <!-- Top Header Bar -->
+  <div class="media-feed-header">
+    <button type="button" id="closeMediaFeedBtn" class="media-feed-icon-btn">
+      <span class="material-symbols-outlined">arrow_back</span>
+    </button>
+    <div class="media-feed-title-wrapper">
+      <h3 id="mediaFeedSenderName">Media</h3>
+      <span id="mediaFeedMetaCount" class="media-feed-count">0 photos, 0 videos</span>
+    </div>
+  </div>
+
+  <!-- Scrollable Vertical Feed Container -->
+  <div id="mediaFeedBody" class="media-feed-body">
+    <!-- Media items will be dynamically injected here by JavaScript -->
+  </div>
+
+  <!--- Floating Quick Reaction Bar (Appears on hold/long-press) -->
+  <div id="mediaReactionPopup" class="media-reaction-popup" hidden>
+    <button type="button" class="reaction-emoji" data-emoji="👍">👍</button>
+    <button type="button" class="reaction-emoji" data-emoji="❤️">❤️</button>
+    <button type="button" class="reaction-emoji" data-emoji="😂">😂</button>
+    <button type="button" class="reaction-emoji" data-emoji="😮">😮</button>
+    <button type="button" class="reaction-emoji" data-emoji="😢">😢</button>
+    <button type="button" class="reaction-emoji" data-emoji="🙏">🙏</button>
+    <button type="button" class="reaction-emoji" data-emoji="👏">👏</button>
+    <button type="button" id="moreReactionsBtn" class="reaction-emoji-add">
+      <span class="material-symbols-outlined">add</span>
+    </button>
+  </div>
+</div>
+
+
+<!-- NetChat Chat Theme Picker -->
+<div id="chatThemeModal" class="nc-theme-modal" hidden aria-hidden="true">
+  <div class="nc-theme-backdrop" data-close-chat-theme></div>
+  <section class="nc-theme-sheet" role="dialog" aria-modal="true" aria-labelledby="chatThemeTitle">
+    <header class="nc-theme-head">
+      <button type="button" class="nc-theme-close" data-close-chat-theme aria-label="Close"><span class="material-symbols-outlined">arrow_back</span></button>
+      <div><h2 id="chatThemeTitle">Chat theme</h2><p>Change this conversation's background and message bubbles.</p></div>
+      <button type="button" class="nc-theme-reset" id="resetChatThemeBtn">Reset</button>
+    </header>
+    <div class="nc-theme-preview" id="chatThemePreview">
+      <div class="nc-preview-pattern"></div>
+      <div class="nc-preview-messages">
+        <div class="nc-preview-bubble incoming">Hey! This is your chat theme ✨</div>
+        <div class="nc-preview-bubble outgoing">This looks amazing! 💙<small>10:42 ✓✓</small></div>
+        <div class="nc-preview-bubble incoming">Pick any style you like.</div>
+      </div>
+    </div>
+    <div class="nc-theme-content">
+      <div class="nc-theme-section-title"><b>Choose a theme</b><span id="chatThemeCount">12 styles</span></div>
+      <div class="nc-theme-grid" id="chatThemeGrid"></div>
+    </div>
+  </section>
+</div>
+
+<!-- ============================================================
+     2. FULL-SCREEN LIGHTBOX GALLERY (SWIPE LEFT / RIGHT)
+     ============================================================ -->
+<div id="mediaLightboxModal" class="media-lightbox-modal" hidden>
+  <!-- Lightbox Header Bar -->
+  <div class="lightbox-header">
+    <button type="button" id="closeLightboxBtn" class="media-feed-icon-btn">
+      <span class="material-symbols-outlined">arrow_back</span>
+    </button>
+    <div class="lightbox-title-wrapper">
+      <h3 id="lightboxSenderName">Media</h3>
+      <span id="lightboxTimestamp" class="lightbox-timestamp">Just now</span>
+    </div>
+    <div class="lightbox-header-actions">
+      <button type="button" class="media-feed-icon-btn">
+        <span class="material-symbols-outlined">star</span>
+      </button>
+      <button type="button" class="media-feed-icon-btn">
+        <span class="material-symbols-outlined">forward</span>
+      </button>
+      <button type="button" class="media-feed-icon-btn">
+        <span class="material-symbols-outlined">more_vert</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Main Image / Video Viewport -->
+  <div id="lightboxViewport" class="lightbox-viewport">
+    <div id="lightboxMediaContent" class="lightbox-media-content">
+      <!-- Active full-screen image/video gets rendered here -->
+    </div>
+  </div>
+
+  <!-- Bottom Reply Bar -->
+  <div class="lightbox-bottom-bar">
+    <div class="lightbox-input-wrapper">
+      <input type="text" id="lightboxReplyInput" placeholder="Reply..." />
+      <button type="button" class="lightbox-emoji-btn" data-emoji="❤️">❤️</button>
+      <button type="button" class="lightbox-emoji-btn" data-emoji="🙏">🙏</button>
+      <button type="button" class="lightbox-sticker-btn">
+        <span class="material-symbols-outlined">add_reaction</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+ </main>
+ 
+<script type="module" src="script.js"></script>
+
+<script type="module" src="netchat-upgrades.js"></script>
+<script src="vera-config.js"></script>
+<script type="module" src="vera.js"></script>
+
+<script src="menu.js"></script></body>
+</html>
+
+
+
+
+
+

@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="X-UA-Compatible" content="ie=edge">
+<title>NetChat — Create your account</title>
+<link rel="stylesheet" href="css/material-icons.css">
+<link rel="stylesheet" href="auth.css">
+
+</head>
+<body>
+
+<div class="bg-grid"></div>
+<div class="orb orb-1"></div>
+<div class="orb orb-2"></div>
+<div class="orb orb-3"></div>
+
+<main class="auth-card" id="authCard">
+
+    <!-- Header -->
+    <header class="auth-header">
+        <div class="auth-logo"><span class="material-symbols-outlined">chat_bubble</span></div>
+        <span class="brand-name">NetChat</span>
+        <div class="pulse-dot"></div>
+    </header>
+
+    <h2 class="auth-title">Create your account</h2>
+    <p class="auth-sub">Join the neon conversation <span class="spark">✦</span></p>
+
+    <!-- Profile picture -->
+    <div class="avatar-row">
+        <div class="avatar-upload" id="avatarZone" role="button" tabindex="0" aria-label="Upload profile picture">
+            <div class="avatar-ring">
+                <div class="avatar-inner" id="avatarInner">
+                    <span class="material-symbols-outlined">person</span>
+                </div>
+            </div>
+            <div class="avatar-badge"><span class="material-symbols-outlined">photo_camera</span></div>
+        </div>
+    </div>
+    <p class="avatar-hint">Tap to add a profile picture</p>
+    <input type="file" id="avatarFile" accept="image/*" hidden>
+
+    <form id="signupForm" novalidate>
+
+        <!-- Full name -->
+        <div class="field" id="nameField">
+            <label for="fullName">Full name</label>
+            <div class="glass">
+                <span class="material-symbols-outlined">person</span>
+                <input type="text" id="fullName" placeholder="Ada Lovelace" autocomplete="name">
+            </div>
+            <p class="note" id="nameNote"></p>
+        </div>
+
+
+
+        <!-- Email -->
+        <div class="field" id="emailField">
+            <label for="email">Email</label>
+            <div class="glass">
+                <span class="material-symbols-outlined">mail</span>
+                <input type="email" id="email" placeholder="you@netchat.app" autocomplete="email">
+            </div>
+            <p class="note" id="emailNote"></p>
+        </div>
+
+        <!-- Password -->
+        <div class="field" id="passField">
+            <label for="password">Password</label>
+            <div class="glass">
+                <span class="material-symbols-outlined">lock</span>
+                <input type="password" id="password" placeholder="••••••••" autocomplete="new-password">
+                <button type="button" class="eye-btn" data-eye="password" aria-label="Show or hide password">
+                    <span class="material-symbols-outlined">visibility</span>
+                </button>
+            </div>
+            <div class="meter" id="meter"><i></i><i></i><i></i><i></i></div>
+            <p class="meter-label" id="meterLabel"></p>
+        </div>
+
+        <!-- Confirm password -->
+        <div class="field" id="confirmField">
+            <label for="confirm">Confirm password</label>
+            <div class="glass" id="confirmWrap">
+                <span class="material-symbols-outlined">lock_reset</span>
+                <input type="password" id="confirm" placeholder="••••••••" autocomplete="new-password">
+                <button type="button" class="eye-btn" data-eye="confirm" aria-label="Show or hide password">
+                    <span class="material-symbols-outlined">visibility</span>
+                </button>
+            </div>
+            <p class="note" id="matchNote"></p>
+        </div>
+
+        <!-- Terms + Remember me -->
+        <div class="form-row">
+            <label class="check-wrap" id="termsWrap">
+                <input type="checkbox" id="terms">
+                <span class="check-box"><span class="material-symbols-outlined">check</span></span>
+                <span class="txt">I agree to the <a id="termsLink">Terms of Service</a> &amp; <a id="privacyLink">Privacy Policy</a></span>
+            </label>
+            <label class="switch-wrap">
+                <input type="checkbox" id="remember" checked>
+                <span class="switch-track"></span>
+                <span>Remember me</span>
+            </label>
+        </div>
+
+        <button class="submit-btn" type="submit" id="createBtn">
+            <span class="btn-text">Create Account →</span>
+            <span class="spinner"></span>
+        </button>
+        <p class="login-link">Already on NetChat? <a href="#login" id="loginToggle">Log in</a></p>
+        <p class="login-link" id="forgotWrap" hidden><a href="#reset" id="forgotPassword">Forgot password?</a></p>
+    </form>
+</main>
+
+<!-- Main app placeholder (shown after signup) -->
+<section class="main-app" id="mainApp" hidden>
+    <h1>✦ Welcome to NetChat</h1>
+    <p>Your account is ready. Time to light up the chat.</p>
+</section>
+
+<!-- Success overlay -->
+<div class="done-overlay" id="doneOverlay">
+    <div class="done-check"><span class="material-symbols-outlined">check</span></div>
+    <h2>Welcome to NetChat!</h2>
+    <p>Your account is ready. Time to light up the chat.</p>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<!-- Policy modal -->
+<div class="modal-backdrop" id="policyModal">
+    <div class="modal">
+        <div class="modal-head">
+            <h3 id="modalTitle">Terms of Service</h3>
+            <button class="modal-close" id="modalClose" aria-label="Close">
+                <span class="material-symbols-outlined">close</span>
+            </button>
+        </div>
+        <div class="modal-body" id="modalBody"></div>
+        <div class="modal-foot">
+            <button class="modal-accept" id="modalAccept">I agree</button>
+        </div>
+    </div>
+</div>
+
+<script type="module" src="auth.js"></script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
