@@ -3,4 +3,4 @@
    Vera uses the deployed Netlify backend so the app can call Vera
    even when NetChat is opened from SPCK, GitHub Pages, or another host.
 */
-window.NETCHAT_VERA_API_URL = "https://clinquant-cat-3001be.netlify.app/.netlify/functions/vera";
+window.NETCHAT_VERA_API_URL = "https://netvera-app.netlify.app/.netlify/functions/vera";
