@@ -49,7 +49,8 @@ export default async (req) => {
     return json(200, {
       ok: true,
       service: 'vera',
-      geminiKeyConfigured: Boolean(process.env.GEMINI_API_KEY)
+      // Updated to check Netvera_API_KEY
+      geminiKeyConfigured: Boolean(process.env.Netvera_API_KEY)
     });
   }
 
@@ -58,8 +59,9 @@ export default async (req) => {
   }
 
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) return json(500, { error: 'Vera server is missing GEMINI_API_KEY.' });
+    // Updated to use Netvera_API_KEY
+    const apiKey = process.env.Netvera_API_KEY;
+    if (!apiKey) return json(500, { error: 'Vera server is missing Netvera_API_KEY.' });
 
     let data;
     try {
