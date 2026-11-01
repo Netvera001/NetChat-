@@ -167,9 +167,23 @@ Return contextual follow-up suggestions only when suggestions are enabled. Keep 
       suggestions: result.suggestions,
       usage: null
     });
-  } catch (error) {
-    console.error('Vera function error:', error);
-    const message = String(error?.message || error || 'Unknown server error');
-    return json(500, { error: message.slice(0, 500) });
-  }
-};
+    
+    
+} catch (error) {
+  console.error('Vera Gemini error:', {
+    name: error?.name,
+    status: error?.status,
+    message: error?.message,
+    details: error?.details,
+    cause: error?.cause
+  });
+
+  const message = String(
+    error?.message || 'Unknown Gemini API error'
+  );
+
+  return json(500, {
+    error: message.slice(0, 1000),
+    status: error?.status || null
+  });
+}
