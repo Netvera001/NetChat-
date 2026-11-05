@@ -1,0 +1,25 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "presence": {
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid === $uid",
+        ".validate": "newData.hasChildren(['online', 'lastSeen'])",
+        "online": { ".validate": "newData.isBoolean()" },
+        "lastSeen": { ".validate": "newData.isNumber() && newData.val() <= now + 1000" },
+        "$other": { ".validate": false }
+      }
+    },
+    "typing": {
+      "$conversationId": {
+        "$uid": {
+          ".read": "auth != null",
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.isBoolean() || (newData.hasChildren(['active', 'updatedAt', 'expiresAt']) && newData.child('active').isBoolean() && newData.child('updatedAt').isNumber() && newData.child('expiresAt').isNumber() && newData.child('expiresAt').val() <= now + 10000)"
+        }
+      }
+    }
+  }
+}

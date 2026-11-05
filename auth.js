@@ -410,6 +410,7 @@ if (result.empty) {
             theNewCreatedUser: results.user.uid,
             profileImage: profileImageUrl,
             profileImagePublicId: profileImagePublicId,
+            about: "Hi, I'm using NetChat.",
             
             privacy: {
                 lastSeen: "Everyone",

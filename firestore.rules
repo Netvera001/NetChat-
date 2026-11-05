@@ -112,14 +112,56 @@ service cloud.firestore {
       allow get, list: if signedIn();
       allow create, update, delete: if isOwner(userId);
 
+      match /stickers/{stickerId} {
+        allow read, create, update, delete: if isOwner(userId);
+      }
+
       match /statuses/{statusId} {
-        allow read: if signedIn();
+        function acceptedStatusContact() {
+          return signedIn()
+            && exists(/databases/$(database)/documents/user/$(userId)/contacts/$(request.auth.uid))
+            && get(/databases/$(database)/documents/user/$(userId)/contacts/$(request.auth.uid)).data.get('status', '') == 'accepted';
+        }
+        function statusAudienceAllowsViewer() {
+          let ownerData = get(/databases/$(database)/documents/user/$(userId)).data;
+          let privacy = ownerData.get('statusPrivacy', {});
+          let mode = privacy.get('mode', 'contacts');
+          return acceptedStatusContact()
+            && (mode == 'contacts'
+              || (mode == 'except' && !(privacy.get('excluded', []) is list && privacy.get('excluded', []).hasAny([request.auth.uid])))
+              || (mode == 'only' && privacy.get('included', []) is list && privacy.get('included', []).hasAny([request.auth.uid])));
+        }
+        allow read: if isOwner(userId) || statusAudienceAllowsViewer();
         allow create: if isOwner(userId)
           && request.resource.data.keys().hasOnly([
             'text', 'media', 'type', 'createdAt', 'expiresAt',
-            'caption', 'background', 'mediaUrl', 'mime'
+            'caption', 'background', 'mediaUrl', 'mime', 'textOverlay',
+            'batchIndex', 'batchSize', 'textOverlayBg', 'textOverlayBgEnabled',
+            'textOverlayX', 'textOverlayY'
           ]);
         allow update, delete: if isOwner(userId);
+
+        match /reactions/{reactorUid} {
+          allow read: if isOwner(userId) || statusAudienceAllowsViewer();
+          allow create, update: if signedIn() && request.auth.uid == reactorUid
+            && (isOwner(userId) || statusAudienceAllowsViewer())
+            && request.resource.data.keys().hasOnly(['uid', 'reaction', 'createdAt'])
+            && request.resource.data.uid == request.auth.uid
+            && request.resource.data.reaction in ['❤️', '😂', '😮', '👏', '🔥'];
+          allow delete: if signedIn() && request.auth.uid == reactorUid;
+        }
+
+        match /replies/{replyId} {
+          allow read: if isOwner(userId) || statusAudienceAllowsViewer();
+          allow create: if signedIn() && (isOwner(userId) || statusAudienceAllowsViewer())
+            && request.resource.data.keys().hasOnly(['uid', 'text', 'createdAt'])
+            && request.resource.data.uid == request.auth.uid
+            && request.resource.data.text is string
+            && request.resource.data.text.size() > 0
+            && request.resource.data.text.size() <= 500;
+          allow update, delete: if isOwner(userId)
+            || (signedIn() && resource.data.uid == request.auth.uid);
+        }
 
         match /viewers/{viewerId} {
           allow read: if signedIn()
@@ -505,7 +547,8 @@ service cloud.firestore {
               )
               && (!resource.data.get('poll', {}).keys().hasAny(['closesAt'])
                 || resource.data.poll.closesAt == null
-                || request.time < timestamp(resource.data.poll.closesAt))
+                || (resource.data.poll.closesAt is timestamp
+                  && request.time < resource.data.poll.closesAt))
             )
           );
 

@@ -1,0 +1,204 @@
+rules_version = '2';
+// PROPOSED ONLY — the deployed rules and a production data export were not supplied.
+// Review every existing collection/field and test with the Firebase emulator before deploying.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function uid() { return request.auth.uid; }
+    function userRef(userId) { return /databases/$(database)/documents/user/$(userId); }
+    function chatRef(chatId) { return /databases/$(database)/documents/chats/$(chatId); }
+    function chatData(chatId) { return get(chatRef(chatId)).data; }
+    function isParticipant(chatId) {
+      return signedIn() && uid() in chatData(chatId).participants;
+    }
+    function isGroupAdmin(chatId) {
+      return isParticipant(chatId)
+        && (chatData(chatId).createdBy == uid() || uid() in chatData(chatId).admins);
+    }
+    function isCommunityMember(communityId) {
+      return signedIn() && exists(/databases/$(database)/documents/communities/$(communityId)/members/$(uid()));
+    }
+    function isCommunityOwner(communityId) {
+      return signedIn() && get(/databases/$(database)/documents/communities/$(communityId)).data.ownerId == uid();
+    }
+    function validNewChat() {
+      return signedIn()
+        && request.resource.data.participants is list
+        && request.resource.data.participants.size() >= 2
+        && request.resource.data.participants.size() <= 100
+        && uid() in request.resource.data.participants
+        && (request.resource.data.isGroup != true || request.resource.data.createdBy == uid());
+    }
+    function participantMetadataUpdate(chatId) {
+      return isParticipant(chatId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'lastMessage', 'lastMessageSenderId', 'lastMessageAt', 'lastMessageStatus', 'lastMessageId',
+        'unreadCount', 'archivedFor', 'pinnedFor', 'mutedBy', 'updatedAt'
+      ]);
+    }
+    function selfExitUpdate(chatId) {
+      return isParticipant(chatId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['participants', 'admins'])
+        && !(uid() in request.resource.data.participants)
+        && request.resource.data.participants.size() == resource.data.participants.size() - 1;
+    }
+    function adminGroupUpdate(chatId) {
+      return isGroupAdmin(chatId)
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.ownerId == resource.data.ownerId
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['groupDeleted'])
+            || resource.data.createdBy == uid())
+        && (resource.data.createdBy in request.resource.data.participants
+            || request.resource.data.admins.size() > 0);
+    }
+    function ownReactionOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])
+        && request.resource.data.reactions.diff(resource.data.reactions).affectedKeys().hasOnly([uid()]);
+    }
+    function ownPollVoteOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['poll'])
+        && request.resource.data.poll.diff(resource.data.poll).affectedKeys().hasOnly(['votes'])
+        && request.resource.data.poll.votes.diff(resource.data.poll.votes).affectedKeys().hasOnly([uid()]);
+    }
+    function readStateOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'readBy', 'deliveredBy', 'status', 'readAt', 'deliveredAt', 'hiddenFor', 'starredBy', 'stars'
+      ]);
+    }
+
+    // The profile directory is searchable by signed-in users. Sensitive fields should
+    // not be added to public profile documents; use private per-user subcollections.
+    match /user/{userId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && uid() == userId
+        && request.resource.data.userFullname is string
+        && request.resource.data.userFullname.size() >= 2
+        && request.resource.data.userFullname.size() <= 60;
+      allow update: if signedIn() && uid() == userId
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['netChatID', 'userEmail'])
+            || (request.resource.data.netChatID == resource.data.netChatID
+                && request.resource.data.userEmail == resource.data.userEmail));
+      allow delete: if false;
+
+      match /contacts/{contactId} {
+        allow read, write: if signedIn() && uid() == userId;
+        // Accepting a request creates the reciprocal contact document.
+        allow create: if signedIn() && uid() == contactId
+          && exists(/databases/$(database)/documents/contactRequests/$(userId + '_' + contactId))
+          && get(/databases/$(database)/documents/contactRequests/$(userId + '_' + contactId)).data.toUid == userId
+          && get(/databases/$(database)/documents/contactRequests/$(userId + '_' + contactId)).data.status == 'pending';
+      }
+      match /communityInvites/{communityId} {
+        allow read, update, delete: if signedIn() && uid() == userId;
+        allow create: if signedIn() && (uid() == userId || isCommunityOwner(communityId));
+      }
+      match /{document=**} {
+        allow read, write: if signedIn() && uid() == userId;
+      }
+    }
+
+    match /contactRequests/{requestId} {
+      allow read: if signedIn() && (resource.data.fromUid == uid() || resource.data.toUid == uid());
+      allow create: if signedIn() && request.resource.data.fromUid == uid()
+        && request.resource.data.toUid is string && request.resource.data.toUid != uid()
+        && request.resource.data.status == 'pending';
+      allow update: if signedIn() && resource.data.toUid == uid()
+        && resource.data.status == 'pending'
+        && request.resource.data.fromUid == resource.data.fromUid
+        && request.resource.data.toUid == resource.data.toUid
+        && request.resource.data.status in ['accepted', 'declined'];
+      allow delete: if false;
+    }
+
+    match /systemInbox/{userId}/items/{itemId} {
+      allow read, update: if signedIn() && uid() == userId;
+      allow create: if signedIn() && request.resource.data.type == 'contact_request'
+        && exists(/databases/$(database)/documents/contactRequests/$(itemId))
+        && get(/databases/$(database)/documents/contactRequests/$(itemId)).data.fromUid == uid()
+        && get(/databases/$(database)/documents/contactRequests/$(itemId)).data.toUid == userId;
+      allow delete: if false;
+    }
+
+    match /chats/{chatId} {
+      allow read: if isParticipant(chatId);
+      allow create: if validNewChat();
+      allow update: if participantMetadataUpdate(chatId) || selfExitUpdate(chatId)
+        || (chatData(chatId).isGroup == true && adminGroupUpdate(chatId));
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        allow read: if isParticipant(chatId);
+        allow create: if isParticipant(chatId)
+          && request.resource.data.senderId == uid()
+          && (chatData(chatId).onlyAdminsCanMessage != true || isGroupAdmin(chatId))
+          && request.resource.data.text is string
+          && request.resource.data.text.size() <= 10000;
+        allow update: if isParticipant(chatId) && (
+          ownReactionOnly() || ownPollVoteOnly() || readStateOnly()
+          || (resource.data.senderId == uid() && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'text', 'media', 'deleted', 'deletedAt', 'editedAt', 'expiresAt'
+          ]))
+        );
+        allow delete: if false;
+      }
+    }
+
+    // Existing two-party WebRTC signaling. This does not authorize or create group calls.
+    match /calls/{callId} {
+      allow read: if signedIn() && (resource.data.offer.callerId == uid() || resource.data.offer.receiverId == uid());
+      allow create: if signedIn() && request.resource.data.offer.callerId == uid()
+        && request.resource.data.offer.receiverId is string
+        && request.resource.data.offer.receiverId != uid()
+        && request.resource.data.offer.callType in ['voice', 'video'];
+      allow update: if signedIn() && (resource.data.offer.callerId == uid() || resource.data.offer.receiverId == uid())
+        && request.resource.data.offer.callerId == resource.data.offer.callerId
+        && request.resource.data.offer.receiverId == resource.data.offer.receiverId;
+      allow delete: if signedIn() && resource.data.offer.callerId == uid();
+      match /{candidates}/{candidateId} {
+        allow read, create: if signedIn()
+          && (get(/databases/$(database)/documents/calls/$(callId)).data.offer.callerId == uid()
+              || get(/databases/$(database)/documents/calls/$(callId)).data.offer.receiverId == uid());
+        allow update, delete: if false;
+      }
+    }
+
+    match /communities/{communityId} {
+      allow read: if signedIn() && (resource.data.visibility == 'public' || isCommunityMember(communityId)
+        || isCommunityOwner(communityId)
+        || exists(/databases/$(database)/documents/user/$(uid())/communityInvites/$(communityId)));
+      allow create: if signedIn() && request.resource.data.ownerId == uid()
+        && request.resource.data.visibility in ['public', 'private']
+        && request.resource.data.name is string && request.resource.data.name.size() <= 60;
+      allow update: if isCommunityOwner(communityId);
+      allow delete: if false;
+
+      match /members/{memberId} {
+        allow read: if isCommunityMember(communityId);
+        allow create: if signedIn() && (isCommunityOwner(communityId)
+          || (uid() == memberId && (get(/databases/$(database)/documents/communities/$(communityId)).data.visibility == 'public'
+              || exists(/databases/$(database)/documents/communities/$(communityId)/invites/$(uid()))));
+        allow update, delete: if isCommunityOwner(communityId) || (signedIn() && uid() == memberId);
+      }
+      match /invites/{inviteeId} {
+        allow read: if isCommunityOwner(communityId) || (signedIn() && uid() == inviteeId);
+        allow create, update: if isCommunityOwner(communityId);
+        allow delete: if isCommunityOwner(communityId) || (signedIn() && uid() == inviteeId);
+      }
+      match /groups/{chatId} {
+        allow read: if isCommunityMember(communityId);
+        allow create: if isCommunityMember(communityId) && request.resource.data.createdBy == uid()
+          && request.resource.data.chatId == chatId;
+        allow update, delete: if isCommunityOwner(communityId);
+      }
+    }
+
+    // Status documents are readable by the signed-in social graph. Client-side contact
+    // filtering is retained for compatibility; tighten queries before restricting reads further.
+    match /statuses/{statusId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.userId == uid();
+      allow update, delete: if signedIn() && resource.data.userId == uid();
+    }
+
+    match /{document=**} { allow read, write: if false; }
+  }
+}

@@ -1,7 +1,7 @@
 /* NetChat integrated repairs. Loaded after script.js; uses the existing composer. */
 import {
   doc, getDoc, getDocs, setDoc, updateDoc, addDoc, collection, query, where,
-  onSnapshot, arrayUnion, arrayRemove, deleteDoc, serverTimestamp
+  onSnapshot, arrayUnion, arrayRemove, deleteDoc, serverTimestamp, Timestamp
 } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
 import { ref, onValue } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 
@@ -492,7 +492,6 @@ function pickAndSend(type) {
 }
 $("#attachFileBtn")?.addEventListener("click", openAttachments);
 
-
 /* ---------- searchable emoji picker ---------- */
 let emojiPickerPromise = null;
 let emojiPopover = null;
@@ -640,6 +639,9 @@ window.visualViewport?.addEventListener("resize", () => {
   if (emojiPopover) positionEmojiPicker();
 });
 
+
+
+
 function openPollCreator() {
   const modal = actionSheet("Create a poll", "Votes update from the shared message document", `<form id="nxPollForm" class="nx-form"><label>Question<input name="question" required maxlength="180" placeholder="What would you like to ask?"></label><div id="nxPollOptions"><label>Option 1<input name="option" required maxlength="80"></label><label>Option 2<input name="option" required maxlength="80"></label></div><button type="button" class="nxup-btn ghost" id="nxAddPollOption">${icon("add")}Add option</button><label class="nx-check"><input type="checkbox" name="multiple"> Allow multiple selections</label><label>Closing time (optional)<input type="datetime-local" name="closesAt"></label><button class="nxup-btn primary" type="submit">Create poll</button></form>`);
   $("#nxAddPollOption", modal.root).onclick = () => {
@@ -659,6 +661,14 @@ function openPollCreator() {
     if (sent) modal.close(); else submit.disabled = false;
   };
 }
+
+
+
+
+
+
+
+
 
 /* Live poll voting uses the same message document as the composer. */
 $("#chatMessagesBody")?.addEventListener("click", async (event) => {
@@ -842,7 +852,11 @@ async function setArchived(card, archived = true) {
   const archiveRef = doc(window.netChatDB, "user", me(), "archivedChats", id);
   if (archived) {
     await setDoc(archiveRef, { chatId: id, title, lastMessage: data.lastMessage || "", archivedAt: serverTimestamp() });
-    card?.remove?.(); notify("Chat archived", { action: () => setArchived({ id }, false) });
+    if (card?.classList?.contains("nx-archive-exit")) {
+      await new Promise(resolve => setTimeout(resolve, 260));
+    }
+    card?.remove?.();
+    notify("Chat archived", { action: () => setArchived({ id }, false) });
   } else {
     await deleteDoc(archiveRef);
     const snap = await getDoc(doc(window.netChatDB, "chats", id));
@@ -876,31 +890,87 @@ async function openChatActions(card) {
 }
 const chatList = $("#chatList");
 if (chatList) {
-  let pressTimer, longPressed = false, touchStart = null, swipedCard = null;
-  const clearSwipe = () => { if (swipedCard) { swipedCard.classList.remove("nx-swiped"); $(".nx-swipe-action", swipedCard)?.remove(); } swipedCard = null; };
+  let pressTimer = null;
+  let longPressed = false;
+  let touchStart = null;
+  let suppressNextChatClick = false;
+
   chatList.addEventListener("click", (event) => {
-    const action = event.target.closest(".nx-swipe-action");
-    if (action) { event.preventDefault(); event.stopImmediatePropagation(); setArchived(swipedCard, true); clearSwipe(); return; }
-    if (longPressed) { event.preventDefault(); event.stopImmediatePropagation(); longPressed = false; }
+    if (suppressNextChatClick) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      suppressNextChatClick = false;
+      return;
+    }
+    if (longPressed) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      longPressed = false;
+    }
   }, true);
-  chatList.addEventListener("contextmenu", (event) => { const card = event.target.closest(".chat-card[data-conversation-id]"); if (card) { event.preventDefault(); openChatActions(card); } });
+
+  chatList.addEventListener("contextmenu", (event) => {
+    const card = event.target.closest(".chat-card[data-conversation-id]");
+    if (card) {
+      event.preventDefault();
+      openChatActions(card);
+    }
+  });
+
   chatList.addEventListener("touchstart", (event) => {
-    const card = event.target.closest(".chat-card[data-conversation-id]"); if (!card) return;
-    const touch = event.touches[0]; touchStart = { x: touch.clientX, y: touch.clientY, card }; longPressed = false;
-    pressTimer = setTimeout(() => { longPressed = true; openChatActions(card); }, 520);
+    const card = event.target.closest(".chat-card[data-conversation-id]");
+    if (!card) return;
+    const touch = event.touches[0];
+    touchStart = { x: touch.clientX, y: touch.clientY, card, moved: false };
+    longPressed = false;
+    clearTimeout(pressTimer);
+    pressTimer = setTimeout(() => {
+      if (touchStart && !touchStart.moved) {
+        longPressed = true;
+        openChatActions(card);
+      }
+    }, 560);
   }, { passive: true });
+
   chatList.addEventListener("touchmove", (event) => {
-    if (!touchStart) return; clearTimeout(pressTimer);
-    const touch = event.touches[0]; const dx = touch.clientX - touchStart.x; const dy = touch.clientY - touchStart.y;
-    if (Math.abs(dx) > Math.abs(dy) && dx < -35) {
-      clearSwipe(); swipedCard = touchStart.card; swipedCard.classList.add("nx-swiped");
-      const button = document.createElement("button"); button.type = "button"; button.className = "nx-swipe-action"; button.innerHTML = `${icon("archive")}<span>Archive</span>`; swipedCard.appendChild(button);
+    if (!touchStart) return;
+    const touch = event.touches[0];
+    const dx = touch.clientX - touchStart.x;
+    const dy = touch.clientY - touchStart.y;
+    if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+      touchStart.moved = true;
+      clearTimeout(pressTimer);
     }
   }, { passive: true });
-  chatList.addEventListener("touchend", () => { clearTimeout(pressTimer); touchStart = null; }, { passive: true });
-  document.addEventListener("click", (event) => { if (!event.target.closest(".chat-card")) clearSwipe(); });
-}
 
+  chatList.addEventListener("touchend", async (event) => {
+    clearTimeout(pressTimer);
+    if (!touchStart) return;
+    const touch = event.changedTouches[0];
+    const dx = touch.clientX - touchStart.x;
+    const dy = touch.clientY - touchStart.y;
+    const card = touchStart.card;
+    touchStart = null;
+
+    if (dx < -85 && Math.abs(dx) > Math.abs(dy) * 1.25) {
+      suppressNextChatClick = true;
+      card.classList.add("nx-archive-exit");
+      try {
+        await setArchived(card, true);
+      } catch (error) {
+        console.error("Swipe archive failed:", error);
+        card.classList.remove("nx-archive-exit");
+        notify("Could not archive this chat. Check your connection and try again.");
+      }
+      window.setTimeout(() => { suppressNextChatClick = false; }, 450);
+    }
+  }, { passive: true });
+
+  chatList.addEventListener("touchcancel", () => {
+    clearTimeout(pressTimer);
+    touchStart = null;
+  }, { passive: true });
+}
 /* ---------- avatar fallback and two-party call hardening ---------- */
 document.addEventListener("error", (event) => {
   const image = event.target;

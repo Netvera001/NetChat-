@@ -368,31 +368,68 @@ body{
 
 .fab-btn {
   position: fixed;
-  bottom: 85px;               /* Sits right above the 70px bottom nav */
-  right: 16px;              /* Positions relative to screen center */
-  transform: scale(0.92);
-/* Offsets inside the 500px max-width container (250px - padding/margin) */
+  bottom: 85px;
+  right: 16px;
+  
   width: 56px;
   height: 56px;
+  padding: 0;
+  
   border-radius: 50%;
   border: 1px solid rgba(0, 240, 255, 0.4);
-  background: rgba(11, 15, 23, 0.9); /* Uses your dark background tone */
-  color: var(--wa-neon-blue);          /* Uses your neon cyan variable */
+  background: rgba(11, 15, 23, 0.9);
+  color: var(--wa-neon-blue);
+  
   display: flex;
   align-items: center;
   justify-content: center;
+  
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  box-shadow: 0 0 20px rgba(0, 240, 255, 0.25); /* Neon cyan glow matching active tabs */
-  cursor: pointer;
-  z-index: 101; /* Keeps it above the bottom navigation bar */
-  transition: all 0.3s ease;
+  
+  box-shadow: 0 0 20px rgba(0, 240, 255, 0.25);
+  
+  cursor: grab;
+  z-index: 101;
+  
+  transform: scale(0.92);
+  transform-origin: center;
+  
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  
+  transition:
+    left 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    top 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    right 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    bottom 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 200ms ease,
+    border-color 200ms ease;
 }
 
+.fab-btn.dragging {
+  cursor: grabbing;
+  
+  transition: none;
+  
+  box-shadow:
+    0 0 12px rgba(0, 240, 255, 0.35),
+    0 0 28px rgba(0, 240, 255, 0.2);
+}
 
 .fab-btn:active {
-  transform: translateX(175px) scale(0.92);
+  box-shadow:
+    0 0 14px rgba(0, 240, 255, 0.4),
+    0 0 28px rgba(0, 240, 255, 0.2);
 }
+
+.fab-btn .fab-icon {
+  pointer-events: none;
+}
+
+
+
 
 /* Fallback for screens smaller than 500px width */
 @media (max-width: 500px) {
@@ -4889,3 +4926,103 @@ padding: 2px;
 }
 
 .nx-chat-quick-actions{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:4000;width:min(92vw,360px);padding:8px;border:1px solid rgba(255,255,255,.12);border-radius:20px;background:rgba(9,15,28,.94);backdrop-filter:blur(22px);box-shadow:0 18px 60px rgba(0,0,0,.45)}.nx-chat-quick-actions button{width:100%;display:flex;align-items:center;gap:12px;padding:13px 12px;border:0;border-bottom:1px solid rgba(255,255,255,.06);background:transparent;color:#eaf1ff;text-align:left;font:inherit;border-radius:12px}.nx-chat-quick-actions button:last-child{border-bottom:0;color:#8e9bb1}.nx-chat-quick-actions button:hover{background:rgba(255,255,255,.06)}.nx-chat-quick-actions .material-symbols-outlined{color:#82a0ff}
+
+
+/* WhatsApp-inspired outgoing message pending state */
+.msg-meta .pending-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: rgba(235, 245, 255, .72);
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: .01em;
+}
+.msg-meta .msg-status.schedule,
+.msg-meta .msg-status.pending {
+  color: rgba(235, 245, 255, .78);
+  font-size: 14px;
+  font-variation-settings: "FILL" 0;
+}
+.msg-row.outgoing .msg-bubble:has(.msg-status.schedule) {
+  border-color: rgba(255,255,255,.18);
+}
+.msg-row.send-failed .msg-bubble {
+  border-color: rgba(255, 105, 105, .62);
+}
+.send-failure {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 6px;
+  color: #ffd0d0;
+  font-size: 11px;
+}
+.send-failure[hidden] { display: none !important; }
+.send-failure button {
+  border: 1px solid rgba(255,255,255,.25);
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: rgba(255,255,255,.12);
+  color: #fff;
+  font: inherit;
+}
+
+
+/* Smooth hold-and-swipe-left archive interaction */
+.chat-card {
+  position: relative;
+  touch-action: pan-y;
+  will-change: transform, opacity;
+  transition: transform 240ms cubic-bezier(.2,.8,.2,1), opacity 220ms ease,
+              max-height 280ms ease, margin 280ms ease, padding 280ms ease,
+              border-width 280ms ease;
+}
+.chat-card.chat-card-dragging {
+  transition: none !important;
+  z-index: 3;
+  opacity: .94;
+  box-shadow: 0 12px 34px rgba(0,0,0,.28);
+  cursor: grabbing;
+}
+.chat-card.chat-card-archiving {
+  overflow: hidden;
+  pointer-events: none;
+  min-height: 0 !important;
+}
+.nc-archive-undo {
+  position: fixed;
+  z-index: 9999;
+  left: 14px;
+  right: 14px;
+  bottom: calc(82px + env(safe-area-inset-bottom, 0px));
+  min-height: 56px;
+  padding: 10px 14px 10px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  color: #f5f7fb;
+  background: rgba(25,29,40,.97);
+  border: 1px solid rgba(0,240,255,.22);
+  border-radius: 16px;
+  box-shadow: 0 12px 36px rgba(0,0,0,.38), 0 0 18px rgba(0,240,255,.08);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  animation: ncUndoIn 220ms cubic-bezier(.2,.8,.2,1) both;
+}
+.nc-archive-undo button {
+  border: 0;
+  border-radius: 11px;
+  padding: 10px 16px;
+  color: var(--wa-neon-blue, #00eaff);
+  background: rgba(0,240,255,.12);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+@keyframes ncUndoIn {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}

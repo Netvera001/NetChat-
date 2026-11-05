@@ -1293,43 +1293,121 @@ window.netChatUserReady.then(() => {
       });
       chatCard.appendChild(favoriteButton);
 
-      let longPressTimer = null;
-      let longPressTriggered = false;
-      const showChatQuickActions = () => {
-        document.querySelector(".nx-chat-quick-actions")?.remove();
-        const pinned = (chatData.pinnedBy || []).includes(currentUserId);
-        const sheet = document.createElement("div");
-        sheet.className = "nx-chat-quick-actions";
-        sheet.innerHTML = `<button data-chat-action="pin"><span class="material-symbols-outlined">push_pin</span>${pinned ? "Unpin chat" : "Pin chat"}</button><button data-chat-action="mute"><span class="material-symbols-outlined">notifications_off</span>Mute notifications</button><button data-chat-action="close"><span class="material-symbols-outlined">close</span>Cancel</button>`;
-        document.body.appendChild(sheet);
-        const closeSheet = () => sheet.remove();
-        sheet.addEventListener("click", async (event) => {
-          const action = event.target.closest("[data-chat-action]")?.dataset.chatAction;
-          if (!action) return;
-          if (action === "close") return closeSheet();
+      let pressTimer = null;
+      let holdReady = false;
+      let gestureActive = false;
+      let suppressChatClick = false;
+      let pointerStartX = 0;
+      let pointerStartY = 0;
+      let currentDx = 0;
+      let originalHeight = 0;
+
+      const showUndoArchive = () => {
+        document.querySelector(".nc-archive-undo")?.remove();
+        const bar = document.createElement("div");
+        bar.className = "nc-archive-undo";
+        bar.innerHTML = `<span>Chat archived</span><button type="button">Undo</button>`;
+        document.body.appendChild(bar);
+        let closed = false;
+        const timer = setTimeout(() => { if (!closed) bar.remove(); }, 5000);
+        bar.querySelector("button").addEventListener("click", async () => {
+          if (closed) return;
+          closed = true; clearTimeout(timer);
           try {
-            if (action === "pin") {
-              const next = pinned ? (chatData.pinnedBy || []).filter(id => id !== currentUserId) : [...new Set([...(chatData.pinnedBy || []), currentUserId])];
-              await updateDoc(doc(window.netChatDB, "chats", chatId), { pinnedBy: next });
-              toast(next.includes(currentUserId) ? "Chat pinned" : "Chat unpinned");
-            } else if (action === "mute") {
-              const muted = (chatData.mutedBy || []).includes(currentUserId);
-              const next = muted ? (chatData.mutedBy || []).filter(id => id !== currentUserId) : [...new Set([...(chatData.mutedBy || []), currentUserId])];
-              await updateDoc(doc(window.netChatDB, "chats", chatId), { mutedBy: next });
-              toast(next.includes(currentUserId) ? "Chat muted" : "Chat unmuted");
-            }
-          } catch (error) { console.error("Chat quick action failed", error); toast("Could not update this chat"); }
-          closeSheet();
+            await deleteDoc(doc(window.netChatDB, "user", currentUserId, "archivedChats", chatId));
+            bar.remove();
+            toast("Chat restored");
+          } catch (error) {
+            console.error("Undo archive failed:", error);
+            toast("Could not restore chat. Check your connection.");
+            bar.remove();
+          }
         });
       };
-      chatCard.addEventListener("touchstart", () => {
-        longPressTriggered = false;
-        clearTimeout(longPressTimer);
-        longPressTimer = setTimeout(() => { longPressTriggered = true; showChatQuickActions(); }, 600);
-      }, { passive: true });
-      ["touchend", "touchmove", "touchcancel"].forEach(type => chatCard.addEventListener(type, () => clearTimeout(longPressTimer), { passive: true }));
-      chatCard.addEventListener("contextmenu", (event) => { event.preventDefault(); showChatQuickActions(); });
-      chatCard.addEventListener("click", (event) => { if (longPressTriggered) { event.preventDefault(); longPressTriggered = false; return; } openConversation(otherUserData, chatId); });
+
+      const archiveThisChat = async () => {
+        const archiveRef = doc(window.netChatDB, "user", currentUserId, "archivedChats", chatId);
+        const card = chatCard;
+        const height = card.getBoundingClientRect().height;
+        card.style.setProperty("--archive-height", `${height}px`);
+        card.classList.add("chat-card-archiving");
+        card.style.maxHeight = `${height}px`;
+        requestAnimationFrame(() => {
+          card.style.maxHeight = "0px";
+          card.style.marginBlock = "0";
+          card.style.paddingBlock = "0";
+          card.style.borderWidth = "0";
+          card.style.opacity = "0";
+          card.style.transform = "translateX(-110%)";
+        });
+        showUndoArchive();
+        try {
+          await setDoc(archiveRef, {
+            chatId,
+            title: otherUserData.userFullname || otherUserData.groupName || "Chat",
+            lastMessage: chatData.lastMessage || "",
+            archivedAt: serverTimestamp()
+          });
+          setTimeout(() => card.remove(), 280);
+        } catch (error) {
+          console.error("Archive failed:", error);
+          card.classList.remove("chat-card-archiving");
+          card.removeAttribute("style");
+          document.querySelector(".nc-archive-undo")?.remove();
+          toast("Could not archive chat. Check your connection.");
+        }
+      };
+
+      chatCard.addEventListener("pointerdown", (event) => {
+        if (event.target.closest("button")) return;
+        if (event.pointerType === "mouse" && event.button !== 0) return;
+        pointerStartX = event.clientX;
+        pointerStartY = event.clientY;
+        currentDx = 0;
+        holdReady = false;
+        gestureActive = false;
+        clearTimeout(pressTimer);
+        pressTimer = setTimeout(() => {
+          holdReady = true;
+          gestureActive = true;
+          originalHeight = chatCard.getBoundingClientRect().height;
+          chatCard.classList.add("chat-card-dragging");
+          try { chatCard.setPointerCapture(event.pointerId); } catch {}
+        }, 240);
+      });
+
+      chatCard.addEventListener("pointermove", (event) => {
+        if (!gestureActive) {
+          if (Math.hypot(event.clientX - pointerStartX, event.clientY - pointerStartY) > 9) clearTimeout(pressTimer);
+          return;
+        }
+        currentDx = Math.min(0, event.clientX - pointerStartX);
+        chatCard.style.transform = `translate3d(${currentDx}px,0,0)`;
+        chatCard.style.opacity = String(Math.max(.35, 1 - Math.abs(currentDx) / 360));
+      });
+
+      const finishChatGesture = async () => {
+        clearTimeout(pressTimer);
+        if (!gestureActive) return;
+        gestureActive = false;
+        chatCard.classList.remove("chat-card-dragging");
+        suppressChatClick = true;
+        if (currentDx < -Math.max(70, chatCard.getBoundingClientRect().width * .28)) {
+          chatCard.style.transform = "translate3d(-105%,0,0)";
+          await archiveThisChat();
+        } else {
+          chatCard.style.transform = "";
+          chatCard.style.opacity = "";
+        }
+        setTimeout(() => { suppressChatClick = false; }, 350);
+      };
+      chatCard.addEventListener("pointerup", finishChatGesture);
+      chatCard.addEventListener("pointercancel", finishChatGesture);
+      chatCard.addEventListener("contextmenu", (event) => event.preventDefault());
+      chatCard.addEventListener("click", (event) => {
+        if (suppressChatClick) { event.preventDefault(); event.stopPropagation(); return; }
+        openConversation(otherUserData, chatId);
+      });
 
       chatList.appendChild(chatCard);
     });
@@ -1359,6 +1437,8 @@ if (closeProfileModal) {
 
 if (fabBtn) {
   fabBtn.addEventListener('click', () => {
+    if (!fabWrapper || !userSearchInput) return;
+    
     fabWrapper.classList.add('active');
     setTimeout(() => userSearchInput.focus(), 200);
   });
@@ -1741,13 +1821,23 @@ async function sendMessagePayload(payload = {}) {
     return true;
   } catch (error) {
     console.error("Message send failed:", error);
-    failedDrafts.set(clientId, { text: messageText, files: filesToUpload, extra });
+    failedDrafts.set(clientId, { text: messageText, files: filesToUpload, extra, conversationId: activeConversationId });
     if (optimistic) {
-      optimistic.classList.add("send-failed");
       const failure = optimistic.querySelector(".send-failure");
-      failure.hidden = false;
-      failure.querySelector("p").textContent = error.message || "Message not sent";
-      optimistic.querySelector(".pending-label").textContent = "Not sent";
+      if (!navigator.onLine) {
+        optimistic.classList.add("is-pending");
+        optimistic.classList.remove("send-failed");
+        optimistic.querySelector(".pending-label").textContent = "Waiting for connection";
+        if (failure) failure.hidden = true;
+        optimistic.dataset.pendingOffline = "true";
+      } else {
+        optimistic.classList.add("send-failed");
+        if (failure) {
+          failure.hidden = false;
+          failure.querySelector("p").textContent = error.message || "Message not sent";
+        }
+        optimistic.querySelector(".pending-label").textContent = "Not sent";
+      }
       if (progress) progress.hidden = true;
     }
     toast(error.message || "Message not sent. Use Retry on the message.");
@@ -1768,6 +1858,20 @@ document.getElementById("chatMessagesBody")?.addEventListener("click", async (ev
   row.remove();
   failedDrafts.delete(row.dataset.clientMessageId);
   await sendMessagePayload(draft);
+});
+
+window.addEventListener("online", async () => {
+  const body = document.getElementById("chatMessagesBody");
+  if (!body || !activeConversationId) return;
+  const pendingRows = [...body.querySelectorAll('[data-pending-offline="true"]')];
+  for (const row of pendingRows) {
+    const clientId = row.dataset.clientMessageId;
+    const draft = failedDrafts.get(clientId);
+    if (!draft || draft.conversationId !== activeConversationId) continue;
+    row.remove();
+    failedDrafts.delete(clientId);
+    await sendMessagePayload(draft);
+  }
 });
 
 if (sendMsgBtn) sendMsgBtn.addEventListener("click", () => sendMessagePayload());
@@ -2748,6 +2852,22 @@ $('#addStatusBtn').addEventListener('click', e => {
 $('#createSheetBk').onclick = () => closeSheet($('#createSheet'), $('#createSheetBk'));
 $('#createSheetCancel').onclick = () => closeSheet($('#createSheet'), $('#createSheetBk'));
 
+$('#myStatusChevron')?.addEventListener('click', async (event) => {
+  event.stopPropagation();
+  const statuses = (await loadMyStatuses()).filter(isLive).sort((a,b) => statusTime(b.createdAt)-statusTime(a.createdAt));
+  if (!statuses.length) { openSheet($('#createSheet'), $('#createSheetBk')); return; }
+  const latest = statuses[0];
+  const viewerDocs = await loadStatusViewers(window.netChatAuthUser.uid, latest.id);
+  const rows = await Promise.all(viewerDocs.map(async v => {
+    let name = 'NetChat User', img = '';
+    try { const u = await getDoc(doc(db,'user',v.uid)); if (u.exists()) { name=u.data().userFullname||name; img=u.data().profileImage||''; } } catch {}
+    return `<button type="button" class="viewer-row viewer-profile-btn" data-uid="${v.uid}"><img src="${img || avatarURI(name,'#00f0ff')}" alt=""><span class="vr-meta"><b>${esc(name)}</b><small>Viewed your status</small></span><span class="vr-time">${v.viewedAt ? timeAgo(v.viewedAt) : ''}</span></button>`;
+  }));
+  $('#viewersCount').textContent = viewerDocs.length;
+  $('#viewersList').innerHTML = rows.join('') || '<div class="status-empty">No views yet</div>';
+  openSheet($('#viewersSheet'), $('#viewersBk'));
+});
+
 $('#myStatusCard').addEventListener('click', async () => {
   const statuses = await loadMyStatuses();
   const liveStatuses = statuses.filter(isLive);
@@ -2759,7 +2879,10 @@ $('#myStatusCard').addEventListener('click', async () => {
   }
 });
 
-/* text-mode background chips */
+/* Status composer: text + multi-media batch */
+const statusMediaItems = [];
+let activeStatusMediaIndex = 0;
+
 $('#bgChips').innerHTML = TEXT_BGS.map((b, i) =>
   `<div class="bg-chip${i === 0 ? ' on' : ''}" data-i="${i}" style="background:${b}"></div>`).join('');
 $$('#bgChips .bg-chip').forEach(ch => ch.onclick = () => {
@@ -2770,9 +2893,7 @@ $$('#bgChips .bg-chip').forEach(ch => ch.onclick = () => {
 });
 $('#textStage').style.background = TEXT_BGS[0];
 $('#charCount').style.color = '#fff';
-
-$('#statusText').addEventListener('input', e =>
-  $('#charCount').textContent = e.target.value.length + '/700');
+$('#statusText').addEventListener('input', e => $('#charCount').textContent = e.target.value.length + '/700');
 
 $$('.create-opt').forEach(btn => btn.onclick = () => {
   closeSheet($('#createSheet'), $('#createSheetBk'));
@@ -2780,121 +2901,196 @@ $$('.create-opt').forEach(btn => btn.onclick = () => {
 });
 
 function openComposer(mode) {
-  composerMode = mode; mediaData = null; mediaMime = '';
-  $('#composerTitle').textContent = mode === 'text' ? 'New text status' : mode === 'image' ? 'New photo status' : 'New video status';
+  composerMode = mode;
+  $('#composerTitle').textContent = mode === 'text' ? 'New text status' : 'New media status';
   $('#textMode').hidden = mode !== 'text';
-  $('#mediaMode').hidden = mode === 'text';
-
-  if (mode !== 'text') {
-    $('#mediaPreview').innerHTML = mode === 'image'
-      ? `<span class="mp-empty">Opening camera / gallery…</span>`
-      : `<span class="mp-empty">Opening camera…</span>`;
+  $('#mediaMode').hidden = mode !== 'media';
+  if (mode === 'media') {
+    statusMediaItems.splice(0, statusMediaItems.length);
+    activeStatusMediaIndex = 0;
+    $('#mediaCaption').value = '';
+    $('#mediaCaptionDescription').value = '';
+    renderStatusMediaEditor();
   }
-
-  $('#mediaCaption').value = '';
-
-  if (mode === 'text') {
-    $('#composer').classList.add('active');
-    setTimeout(() => $('#statusText').focus(), 380);
-  } else {
-    pickMedia(mode);
-  }
+  $('#composer').classList.add('active');
+  if (mode === 'text') setTimeout(() => $('#statusText').focus(), 250);
 }
 
 $('#composerClose').onclick = () => $('#composer').classList.remove('active');
+$('#chooseStatusMedia').onclick = () => $('#statusMediaPicker').click();
+$('#captureStatusPhoto').onclick = () => $('#statusPhotoCapture').click();
+$('#recordStatusVideo').onclick = () => $('#statusVideoCapture').click();
 
-/* pick media: gallery file input (camera capture via `capture` on mobile) */
-function pickMedia(mode) {
-  const inp = document.createElement('input');
-  inp.type = 'file';
-  inp.accept = mode === 'image' ? 'image/*' : 'video/*';
-  if (navigator.mediaDevices?.getUserMedia) inp.setAttribute('capture', 'environment');
-
-  inp.onchange = () => {
-    const f = inp.files[0];
-    if (!f) return;
-    const r = new FileReader();
-    r.onload = () => {
-      mediaData = r.result; mediaMime = f.type;
-      $('#mediaPreview').innerHTML = mode === 'image'
-        ? `<img src="${mediaData}" alt="">`
-        : `<video src="${mediaData}" muted loop autoplay playsinline></video>`;
-      $('#composer').classList.add('active');
-    };
-    r.readAsDataURL(f);
-  };
-
-  inp.click();
+function readStatusFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({ file, data: reader.result, mime: file.type || '', type: file.type.startsWith('video/') ? 'video' : 'image', overlayText: '', caption: '' });
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 
-/* post — text statuses save to Firestore now; media upload (Cloudinary) is next step */
+async function addStatusFiles(fileList) {
+  const files = Array.from(fileList || []).filter(f => f.type.startsWith('image/') || f.type.startsWith('video/'));
+  if (!files.length) return;
+  // Limit each batch to keep mobile memory use reasonable.
+  if (statusMediaItems.length + files.length > 20) return toast('Choose up to 20 photos/videos per status batch');
+  try {
+    const added = await Promise.all(files.map(readStatusFile));
+    statusMediaItems.push(...added);
+    activeStatusMediaIndex = statusMediaItems.length - added.length;
+    renderStatusMediaEditor();
+  } catch (err) {
+    console.error('Could not read status media', err);
+    toast('Could not open one of those files');
+  }
+}
+
+$('#statusMediaPicker').addEventListener('change', e => { addStatusFiles(e.target.files); e.target.value = ''; });
+$('#statusPhotoCapture').addEventListener('change', e => { addStatusFiles(e.target.files); e.target.value = ''; });
+$('#statusVideoCapture').addEventListener('change', e => { addStatusFiles(e.target.files); e.target.value = ''; });
+
+function renderStatusMediaEditor() {
+  const preview = $('#mediaPreview');
+  const count = $('#statusMediaCount');
+  const item = statusMediaItems[activeStatusMediaIndex];
+  if (!item) {
+    preview.innerHTML = '<div class="status-media-empty"><span class="material-symbols-outlined">add_photo_alternate</span><b>Add photos and videos</b><small>Select multiple items, then edit each one before posting.</small></div>';
+    count.textContent = 'No media selected';
+    $('#mediaCaption').value = '';
+    $('#mediaCaptionDescription').value = '';
+    return;
+  }
+  const media = item.type === 'video'
+    ? `<video src="${item.data}" muted controls playsinline></video>`
+    : `<img src="${item.data}" alt="Selected status media">`;
+  preview.innerHTML = `${media}<div class="status-overlay-preview ${item.overlayBgEnabled ? 'has-bg' : ''} bg-${item.overlayBg || 'dark'}" style="display:${item.overlayText ? 'block' : 'none'};left:${item.overlayX ?? 50}%;top:${item.overlayY ?? 45}%">${escapeStatusText(item.overlayText)}</div><button type="button" class="status-remove-current" id="removeCurrentStatusMedia" aria-label="Remove selected media"><span class="material-symbols-outlined">delete</span></button>`;
+  count.textContent = `Item ${activeStatusMediaIndex + 1} of ${statusMediaItems.length}`;
+  $('#mediaCaption').value = item.overlayText || '';
+  $('#mediaCaptionDescription').value = item.caption || '';
+  $('#overlayBackgroundToggle').checked = !!item.overlayBgEnabled;
+  $$('#overlayBgSwatches button').forEach(b => b.classList.toggle('on', b.dataset.bg === (item.overlayBg || 'dark')));
+  const remove = $('#removeCurrentStatusMedia');
+  if (remove) remove.onclick = () => {
+    statusMediaItems.splice(activeStatusMediaIndex, 1);
+    activeStatusMediaIndex = Math.max(0, Math.min(activeStatusMediaIndex, statusMediaItems.length - 1));
+    renderStatusMediaEditor();
+  };
+  let strip = $('#statusMediaStrip');
+  if (!strip) {
+    strip = document.createElement('div'); strip.id = 'statusMediaStrip'; strip.className = 'status-media-strip';
+    preview.insertAdjacentElement('afterend', strip);
+  }
+  strip.innerHTML = statusMediaItems.map((it, i) => `<button type="button" class="status-media-thumb${i === activeStatusMediaIndex ? ' active' : ''}" data-index="${i}" aria-label="Edit item ${i + 1}">${it.type === 'video' ? `<video src="${it.data}" muted></video><span class="material-symbols-outlined thumb-video">play_circle</span>` : `<img src="${it.data}" alt="">`}<span class="thumb-number">${i + 1}</span></button>`).join('') + '<button type="button" class="status-media-add" id="addMoreStatusMedia" aria-label="Add more media"><span class="material-symbols-outlined">add</span></button>';
+  strip.querySelectorAll('[data-index]').forEach(btn => btn.onclick = () => {
+    saveCurrentStatusMediaEdits(); activeStatusMediaIndex = Number(btn.dataset.index); renderStatusMediaEditor();
+  });
+  $('#addMoreStatusMedia').onclick = () => $('#statusMediaPicker').click();
+}
+function saveCurrentStatusMediaEdits() {
+  const item = statusMediaItems[activeStatusMediaIndex];
+  if (!item) return;
+  item.overlayText = $('#mediaCaption').value.trim();
+  item.caption = $('#mediaCaptionDescription').value.trim();
+  const bgToggle = $('#overlayBackgroundToggle'); if (bgToggle) item.overlayBgEnabled = bgToggle.checked;
+}
+function escapeStatusText(value) {
+  return String(value || '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+$('#mediaCaption').addEventListener('input', () => {
+  const item = statusMediaItems[activeStatusMediaIndex]; if (!item) return;
+  item.overlayText = $('#mediaCaption').value;
+  const overlay = $('#mediaPreview .status-overlay-preview');
+  if (overlay) { overlay.textContent = item.overlayText; overlay.style.display = item.overlayText ? 'block' : 'none'; }
+});
+$('#mediaCaptionDescription').addEventListener('input', saveCurrentStatusMediaEdits);
+$('#overlayBackgroundToggle')?.addEventListener('change', () => {
+  const item = statusMediaItems[activeStatusMediaIndex]; if (!item) return;
+  item.overlayBgEnabled = $('#overlayBackgroundToggle').checked;
+  const overlay = $('#mediaPreview .status-overlay-preview');
+  if (overlay) overlay.classList.toggle('has-bg', item.overlayBgEnabled);
+});
+$('#overlayBgSwatches')?.querySelectorAll('button').forEach(btn => btn.addEventListener('click', () => {
+  const item = statusMediaItems[activeStatusMediaIndex]; if (!item) return;
+  item.overlayBg = btn.dataset.bg;
+  $('#overlayBgSwatches').querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
+  const overlay = $('#mediaPreview .status-overlay-preview');
+  if (overlay) { overlay.classList.remove('bg-dark','bg-cyan','bg-purple','bg-light'); overlay.classList.add(`bg-${item.overlayBg}`); }
+}));
+(() => {
+  const preview = $('#mediaPreview');
+  let drag = null;
+  preview?.addEventListener('pointerdown', e => {
+    const overlay = e.target.closest('.status-overlay-preview');
+    if (!overlay || !statusMediaItems[activeStatusMediaIndex]) return;
+    drag = { id: e.pointerId, x: e.clientX, y: e.clientY, left: statusMediaItems[activeStatusMediaIndex].overlayX ?? 50, top: statusMediaItems[activeStatusMediaIndex].overlayY ?? 45, rect: preview.getBoundingClientRect() };
+    overlay.setPointerCapture?.(e.pointerId);
+    e.preventDefault();
+  });
+  preview?.addEventListener('pointermove', e => {
+    if (!drag || drag.id !== e.pointerId) return;
+    const item = statusMediaItems[activeStatusMediaIndex]; if (!item) return;
+    item.overlayX = Math.max(8, Math.min(92, drag.left + ((e.clientX-drag.x)/drag.rect.width)*100));
+    item.overlayY = Math.max(8, Math.min(92, drag.top + ((e.clientY-drag.y)/drag.rect.height)*100));
+    const overlay = preview.querySelector('.status-overlay-preview');
+    if (overlay) { overlay.style.left = `${item.overlayX}%`; overlay.style.top = `${item.overlayY}%`; }
+  });
+  const stop = () => { if (drag) saveCurrentStatusMediaEdits(); drag = null; };
+  preview?.addEventListener('pointerup', stop); preview?.addEventListener('pointercancel', stop);
+})();
+$('#mediaPreview').addEventListener('touchstart', e => { window.__statusSwipeX = e.changedTouches[0].clientX; }, { passive: true });
+$('#mediaPreview').addEventListener('touchend', e => {
+  if (window.__statusSwipeX == null || statusMediaItems.length < 2) return;
+  const dx = e.changedTouches[0].clientX - window.__statusSwipeX; window.__statusSwipeX = null;
+  if (Math.abs(dx) < 45) return;
+  saveCurrentStatusMediaEdits();
+  activeStatusMediaIndex = (activeStatusMediaIndex + (dx < 0 ? 1 : -1) + statusMediaItems.length) % statusMediaItems.length;
+  renderStatusMediaEditor();
+}, { passive: true });
+
 $('#postStatusBtn').onclick = async () => {
+  const user = window.netChatAuthUser;
+  if (!user) return toast('You must be signed in');
+  const postBtn = $('#postStatusBtn');
   if (composerMode === 'text') {
     const txt = $('#statusText').value.trim();
     if (!txt) return toast('Write something first');
-
-    const user = window.netChatAuthUser;
-    if (!user) return toast('You must be signed in');
-
+    postBtn.disabled = true;
     try {
-      await addDoc(collection(db, 'user', user.uid, 'statuses'), {
-        type: 'text',
-        text: txt,
-        background: composerBg,
-        createdAt: serverTimestamp(),
-        expiresAt: new Date(Date.now() + DAY)
-      });
-      window.netChatTrackAchievementEvent?.("status");
-    } catch (error) {
-      console.error('STATUS: failed to save text status:', error);
-      return toast('Failed to post status');
-    }
-
-    $('#statusText').value = '';
-    $('#charCount').textContent = '0/700';
-    $('#composer').classList.remove('active');
-    renderMyCard();
-    toast('Status posted');
+      await addDoc(collection(db, 'user', user.uid, 'statuses'), { type: 'text', text: txt, background: composerBg, createdAt: serverTimestamp(), expiresAt: new Date(Date.now() + DAY) });
+      window.netChatTrackAchievementEvent?.('status');
+      $('#statusText').value = ''; $('#charCount').textContent = '0/700';
+      $('#composer').classList.remove('active'); await renderMyCard(); toast('Status posted');
+    } catch (error) { console.error('STATUS: failed to save text status:', error); toast('Failed to post status'); }
+    finally { postBtn.disabled = false; }
     return;
   }
-
-  if (!mediaData) return toast('Pick a ' + composerMode + ' first');
-
-  const statusUser = window.netChatAuthUser;
-  if (!statusUser) return toast('You must be signed in');
-
-  const statusPostBtn = $('#postStatusBtn');
-  statusPostBtn.disabled = true;
-
+  saveCurrentStatusMediaEdits();
+  if (!statusMediaItems.length) return toast('Choose photos or videos first');
+  postBtn.disabled = true;
   try {
-    toast('Uploading status…');
-    const blob = await (await fetch(mediaData)).blob();
-    const uploaded = await uploadChatMediaToCloudinary(blob);
-
-    await addDoc(collection(db, 'user', statusUser.uid, 'statuses'), {
-      type: composerMode === 'video' ? 'video' : 'image',
-      mediaUrl: uploaded.url,
-      caption: $('#mediaCaption').value.trim() || null,
-      mime: mediaMime || null,
-      createdAt: serverTimestamp(),
-      expiresAt: new Date(Date.now() + DAY)
-    });
-    window.netChatTrackAchievementEvent?.("status");
-
-    $('#composer').classList.remove('active');
-    mediaData = null;
-    $('#mediaCaption').value = '';
-    await renderMyCard();
-    await refreshStatusFeed();
-    toast('Status posted');
-  } catch (error) {
-    console.error('STATUS: media upload failed:', error);
-    toast('Failed to upload status');
-  } finally {
-    statusPostBtn.disabled = false;
-  }
-  return;
+    for (let i = 0; i < statusMediaItems.length; i++) {
+      const item = statusMediaItems[i];
+      toast(`Uploading status ${i + 1} of ${statusMediaItems.length}…`);
+      const blob = await (await fetch(item.data)).blob();
+      const uploaded = await uploadChatMediaToCloudinary(blob);
+      await addDoc(collection(db, 'user', user.uid, 'statuses'), {
+        type: item.type, mediaUrl: uploaded.url, caption: item.caption || item.overlayText || null,
+        textOverlay: item.overlayText || null, mime: item.mime || null,
+        textOverlayBg: item.overlayBg || 'dark', textOverlayBgEnabled: !!item.overlayBgEnabled,
+        textOverlayX: item.overlayX ?? 50, textOverlayY: item.overlayY ?? 45,
+        batchIndex: i, batchSize: statusMediaItems.length,
+        createdAt: serverTimestamp(), expiresAt: new Date(Date.now() + DAY)
+      });
+      window.netChatTrackAchievementEvent?.('status');
+    }
+    statusMediaItems.splice(0, statusMediaItems.length); activeStatusMediaIndex = 0;
+    $('#mediaCaption').value = ''; $('#mediaCaptionDescription').value = '';
+    $('#composer').classList.remove('active'); await renderMyCard(); await refreshStatusFeed(); toast('All status items posted');
+  } catch (error) { console.error('STATUS: media upload failed:', error); toast('Some items may have posted. Check your status before retrying.'); }
+  finally { postBtn.disabled = false; }
 };
+
 
 /* ============================================================
    STATUS VIEWER ENGINE
@@ -2968,7 +3164,7 @@ function showItem(idx) {
   $('#vCaption').textContent = it.caption || '';
 
   const stage = $('#vStage');
-  stage.querySelectorAll('.v-media, .v-text').forEach(n => n.remove());
+  stage.querySelectorAll('.v-media, .v-text, .v-status-text-overlay').forEach(n => n.remove());
 
   let dur = 5000;
 
@@ -3004,7 +3200,15 @@ function showItem(idx) {
     viewer.videoEl = v;
   }
 
-      if (it.author) {
+      if (it.textOverlay) {
+    const overlay = document.createElement('div');
+    overlay.className = `v-status-text-overlay ${it.textOverlayBgEnabled ? 'has-bg' : ''} bg-${it.textOverlayBg || 'dark'}`;
+    overlay.textContent = it.textOverlay;
+    overlay.style.left = `${it.textOverlayX ?? 50}%`; overlay.style.top = `${it.textOverlayY ?? 45}%`; overlay.style.right = 'auto';
+    stage.appendChild(overlay);
+  }
+
+  if (it.author) {
   console.log("STATUS: recording view for:", it.author.id, it.id);
   recordStatusView(it.author.id, it.id);
 }
@@ -3109,6 +3313,19 @@ function prevItem() { showItem(viewer.idx > 0 ? viewer.idx - 1 : 0); }
 })();
 
 $('#vClose').onclick = closeViewer;
+$('#vUser')?.addEventListener('click', async () => {
+  const it = viewer.list[viewer.idx]; const uid = it?.author?.id;
+  if (!uid) return;
+  try {
+    const snap = await getDoc(doc(db, 'user', uid)); if (!snap.exists()) return;
+    const u = snap.data();
+    const av = $('#modalUserAvatar'); if (av) av.src = u.profileImage || 'default-avatar.png';
+    const id = $('#modalNetchatId'); if (id) id.textContent = u.netChatID || '';
+    const name = $('#modalUserName'); if (name) name.textContent = u.userFullname || 'NetChat User';
+    const bio = $('#modalUserBio'); if (bio) bio.textContent = u.about || 'No bio available yet.';
+    $('#userProfileModal')?.classList.add('active'); $('#profileBackdrop')?.classList.add('active');
+  } catch (error) { console.error('STATUS: profile open failed:', error); }
+});
 
 document.addEventListener('keydown', e => {
   if (!viewer.open) return;
@@ -3161,6 +3378,28 @@ async function refreshViewerQueue() {
   showItem(viewer.idx);
 }
 
+/* Status reactions and replies are stored per status. */
+async function writeStatusReaction(reaction) {
+  const it = viewer.list[viewer.idx], me = window.netChatAuthUser;
+  if (!it || !me) return;
+  const ownerUid = it.author?.id || me.uid;
+  try {
+    await setDoc(doc(db,'user',ownerUid,'statuses',it.id,'reactions',me.uid), { uid: me.uid, reaction, createdAt: serverTimestamp() }, { merge: true });
+    $('#vReactionNote').textContent = `You reacted ${reaction}`;
+  } catch (error) { console.error('STATUS: reaction failed:',error); toast('Could not send reaction'); }
+}
+$$('.v-reactions button').forEach(btn => btn.addEventListener('click', () => writeStatusReaction(btn.dataset.reaction)));
+$('#vReplyForm')?.addEventListener('submit', async e => {
+  e.preventDefault();
+  const it = viewer.list[viewer.idx], me = window.netChatAuthUser, input = $('#vReplyInput');
+  const text = input.value.trim(); if (!it || !me || !text) return;
+  const ownerUid = it.author?.id || me.uid;
+  try {
+    await addDoc(collection(db,'user',ownerUid,'statuses',it.id,'replies'), { uid: me.uid, text, createdAt: serverTimestamp() });
+    input.value = ''; $('#vReactionNote').textContent = 'Reply sent';
+  } catch (error) { console.error('STATUS: reply failed:',error); toast('Could not send reply'); }
+});
+
 /* ============================================================
    OWN-STATUS TOOLS: viewers / add / repost / delete
    ============================================================ */
@@ -3181,11 +3420,11 @@ $('#vViewersBtn').onclick = async () => {
       }
     } catch {}
     return `
-      <div class="viewer-row">
+      <button type="button" class="viewer-row viewer-profile-btn" data-uid="${v.uid}">
         <img src="${img || avatarURI(name, "#00f0ff")}" alt="">
-        <div class="vr-meta"><b>${esc(name)}</b><small>Viewed your status</small></div>
+        <span class="vr-meta"><b>${esc(name)}</b><small>Viewed your status</small></span>
         <span class="vr-time">${v.viewedAt ? timeAgo(v.viewedAt) : ""}</span>
-      </div>`;
+      </button>`;
   }));
 
   $('#viewersCount').textContent = viewerDocs.length;
@@ -3196,6 +3435,17 @@ $('#vViewersBtn').onclick = async () => {
 };
 
 $('#viewersBk').onclick = () => closeSheet($('#viewersSheet'), $('#viewersBk'));
+$('#viewersList')?.addEventListener('click', async e => { const row=e.target.closest('[data-uid]'); if(!row) return; const snap=await getDoc(doc(db,'user',row.dataset.uid)); if(!snap.exists()) return; const u=snap.data(); $('#modalUserAvatar').src=u.profileImage||'default-avatar.png'; $('#modalNetchatId').textContent=u.netChatID||''; $('#modalUserName').textContent=u.userFullname||'NetChat User'; $('#modalUserBio').textContent=u.about||'No bio available yet.'; $('#userProfileModal')?.classList.add('active'); $('#profileBackdrop')?.classList.add('active'); });
+
+$('#vShareBtn')?.addEventListener('click', async () => {
+  const it = viewer.list[viewer.idx]; if (!it) return;
+  const shareText = [it.text || it.caption || 'Check out this status on NetChat', it.mediaUrl || ''].filter(Boolean).join('\n');
+  try {
+    if (navigator.share) await navigator.share({ title: 'NetChat status', text: shareText, url: it.mediaUrl || location.href });
+    else if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(shareText); toast('Status link copied'); }
+    else { window.prompt('Copy this status link/text:', shareText); }
+  } catch (error) { if (error?.name !== 'AbortError') { console.error('STATUS: share failed:', error); toast('Could not share status'); } }
+});
 
 $('#vAddMoreBtn').onclick = e => {
   e.stopPropagation();
@@ -3264,54 +3514,83 @@ $('#confirmYes').onclick = async () => {
 };
 
 /* ============================================================
-   PRIVACY SHEET — persisted in Firestore on the user doc
+   PRIVACY SHEET — saved audience + accepted-contact picker
    ============================================================ */
-$('#privacyRow').onclick = async () => {
-  const me = window.netChatAuthUser;
-  if (!me) return;
+let pendingPrivacy = { ...STATUS_PRIVACY_DEFAULT };
+let privacyContacts = [];
+const privacyPicker = $('#privacyContactPicker');
 
-  let p = STATUS_PRIVACY_DEFAULT;
+async function loadAcceptedContactsForPrivacy() {
+  const me = window.netChatAuthUser;
+  if (!me) return [];
+  const snap = await getDocs(collection(db, 'user', me.uid, 'contacts'));
+  const accepted = snap.docs.filter(d => d.data().status === 'accepted');
+  return Promise.all(accepted.map(async d => {
+    const userSnap = await getDoc(doc(db, 'user', d.id));
+    if (!userSnap.exists()) return null;
+    const data = userSnap.data();
+    return { uid: d.id, name: data.userFullname || 'NetChat User', image: data.profileImage || '' };
+  })).then(rows => rows.filter(Boolean).sort((a,b) => a.name.localeCompare(b.name)));
+}
+
+function renderPrivacyContactPicker() {
+  const mode = pendingPrivacy.mode;
+  const chosen = mode === 'only' ? pendingPrivacy.included : pendingPrivacy.excluded;
+  $('#privacyPickerTitle').textContent = mode === 'only' ? 'Only share with…' : 'Hide status from…';
+  $('#privacyPickerHint').textContent = mode === 'only' ? 'Only selected accepted contacts can see your status.' : 'Selected accepted contacts will not see your status.';
+  $('#privacyContactList').innerHTML = privacyContacts.length ? privacyContacts.map(c => `
+    <label class="privacy-contact-row">
+      <img src="${c.image || avatarURI(c.name, '#00f0ff')}" alt="">
+      <span>${esc(c.name)}</span>
+      <input type="checkbox" data-uid="${c.uid}" ${chosen.includes(c.uid) ? 'checked' : ''}>
+    </label>`).join('') : '<div class="status-empty">No accepted contacts yet.</div>';
+  privacyPicker.hidden = false;
+}
+
+$('#privacyRow').onclick = async () => {
+  const me = window.netChatAuthUser; if (!me) return;
   try {
     const snap = await getDoc(doc(db, 'user', me.uid));
-    if (snap.exists()) {
-      p = { ...STATUS_PRIVACY_DEFAULT, ...(snap.data().statusPrivacy || {}) };
-    }
-  } catch {}
-
-  $$('input[name="privacy"]').forEach(r => r.checked = r.value === p.mode);
-  $('#privacyLabel').textContent = PRIVACY_LABELS[p.mode];
-  openSheet($('#privacySheet'), $('#privacyBk'));
+    pendingPrivacy = { ...STATUS_PRIVACY_DEFAULT, ...((snap.exists() && snap.data().statusPrivacy) || {}) };
+    $$('input[name="privacy"]').forEach(r => r.checked = r.value === pendingPrivacy.mode);
+    $('#privacyLabel').textContent = PRIVACY_LABELS[pendingPrivacy.mode];
+    privacyPicker.hidden = true;
+    openSheet($('#privacySheet'), $('#privacyBk'));
+  } catch (error) { console.error('STATUS: privacy load failed:', error); toast('Could not load status privacy'); }
 };
 
-$('#privacyBk').onclick = () => closeSheet($('#privacySheet'), $('#privacyBk'));
-
 $$('input[name="privacy"]').forEach(r => r.addEventListener('change', async () => {
-  const me = window.netChatAuthUser;
-  if (!me) return;
-
-  try {
-    const snap = await getDoc(doc(db, 'user', me.uid));
-    const current = {
-      ...STATUS_PRIVACY_DEFAULT,
-      ...((snap.exists() && snap.data().statusPrivacy) || {})
-    };
-    current.mode = r.value;
-
-    await setDoc(doc(db, 'user', me.uid), { statusPrivacy: current }, { merge: true });
-
-    $('#privacyLabel').textContent = PRIVACY_LABELS[r.value];
-    closeSheet($('#privacySheet'), $('#privacyBk'));
-
-    toast({
-      contacts: 'Status shared with all contacts',
-      except: 'Mode saved — contact picker comes next',
-      only: 'Mode saved — contact picker comes next'
-    }[r.value]);
-  } catch (error) {
-    console.error('STATUS: privacy save failed:', error);
-    toast('Failed to update privacy');
+  pendingPrivacy.mode = r.value;
+  if (r.value === 'contacts') {
+    pendingPrivacy.excluded = []; pendingPrivacy.included = [];
+    try {
+      await setDoc(doc(db, 'user', window.netChatAuthUser.uid), { statusPrivacy: pendingPrivacy }, { merge: true });
+      $('#privacyLabel').textContent = PRIVACY_LABELS.contacts;
+      privacyPicker.hidden = true; closeSheet($('#privacySheet'), $('#privacyBk'));
+      toast('Status shared with all accepted contacts');
+    } catch (error) { console.error('STATUS: privacy save failed:', error); toast('Failed to update privacy'); }
+    return;
   }
+  try { privacyContacts = await loadAcceptedContactsForPrivacy(); renderPrivacyContactPicker(); }
+  catch (error) { console.error('STATUS: contacts load failed:', error); toast('Could not load accepted contacts'); }
 }));
+
+$('#savePrivacySelection')?.addEventListener('click', async () => {
+  const me = window.netChatAuthUser; if (!me) return;
+  const selected = $$('#privacyContactList input[type="checkbox"]:checked').map(input => input.dataset.uid);
+  if (pendingPrivacy.mode === 'only') pendingPrivacy.included = selected;
+  else pendingPrivacy.excluded = selected;
+  try {
+    await setDoc(doc(db, 'user', me.uid), { statusPrivacy: pendingPrivacy }, { merge: true });
+    window.netChatUserData = { ...(window.netChatUserData || {}), statusPrivacy: pendingPrivacy };
+    $('#privacyLabel').textContent = PRIVACY_LABELS[pendingPrivacy.mode];
+    closeSheet($('#privacySheet'), $('#privacyBk'));
+    toast(pendingPrivacy.mode === 'only' ? `Sharing with ${selected.length} selected contact(s)` : `Hiding from ${selected.length} selected contact(s)`);
+    await refreshStatusFeed();
+  } catch (error) { console.error('STATUS: privacy save failed:', error); toast('Failed to save status audience'); }
+});
+
+$('#privacyBk').onclick = () => closeSheet($('#privacySheet'), $('#privacyBk'));
 
 /* my avatar: offline fallback */
 (() => {
@@ -3515,6 +3794,16 @@ function renderChatMediaPreview() {
   
   chatMediaPreview.hidden = selectedChatMedia.length === 0;
 }
+
+// Allow the sticker picker (loaded as a separate module) to add media to the
+// existing composer without bypassing the normal preview/send pipeline.
+window.netChatSetComposerMedia = function (files, { append = true } = {}) {
+  const incoming = Array.from(files || []).filter((file) => file instanceof File);
+  if (!incoming.length) return false;
+  selectedChatMedia = append ? [...selectedChatMedia, ...incoming] : incoming;
+  renderChatMediaPreview();
+  return true;
+};
 
 
 // ===============================
@@ -4681,3 +4970,128 @@ window.netChatCacheChatList = (items) => {
     localStorage.setItem(`netchat:${uid}:chat-list-cache`, JSON.stringify(items));
   } catch {}
 };
+
+
+// Draggable Floating Action Button
+if (fabBtn) {
+  let isDragging = false;
+  let startX = 0;
+  let startY = 0;
+  let startLeft = 0;
+  let startTop = 0;
+  let dragMoved = false;
+
+  const EDGE_PADDING = 8;
+  const BOTTOM_NAV_SPACE = 75;
+  const DRAG_THRESHOLD = 5;
+
+  fabBtn.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+
+    const rect = fabBtn.getBoundingClientRect();
+
+    startX = event.clientX;
+    startY = event.clientY;
+    startLeft = rect.left;
+    startTop = rect.top;
+
+    isDragging = false;
+    dragMoved = false;
+
+    fabBtn.setPointerCapture(event.pointerId);
+  });
+
+  fabBtn.addEventListener("pointermove", (event) => {
+    if (!fabBtn.hasPointerCapture(event.pointerId)) return;
+
+    const dx = event.clientX - startX;
+    const dy = event.clientY - startY;
+
+    if (!isDragging && Math.hypot(dx, dy) < DRAG_THRESHOLD) {
+      return;
+    }
+
+    isDragging = true;
+    dragMoved = true;
+
+    fabBtn.classList.add("dragging");
+
+    const rect = fabBtn.getBoundingClientRect();
+
+    const maxLeft = Math.max(
+      EDGE_PADDING,
+      window.innerWidth - rect.width - EDGE_PADDING
+    );
+
+    const maxTop = Math.max(
+      EDGE_PADDING,
+      window.innerHeight - rect.height - BOTTOM_NAV_SPACE
+    );
+
+    const left = Math.max(
+      EDGE_PADDING,
+      Math.min(startLeft + dx, maxLeft)
+    );
+
+    const top = Math.max(
+      EDGE_PADDING,
+      Math.min(startTop + dy, maxTop)
+    );
+
+    fabBtn.style.left = `${left}px`;
+    fabBtn.style.top = `${top}px`;
+    fabBtn.style.right = "auto";
+    fabBtn.style.bottom = "auto";
+  });
+
+  fabBtn.addEventListener("pointerup", (event) => {
+    if (fabBtn.hasPointerCapture(event.pointerId)) {
+      fabBtn.releasePointerCapture(event.pointerId);
+    }
+
+    fabBtn.classList.remove("dragging");
+
+    if (!isDragging) return;
+
+    const rect = fabBtn.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+
+    // Snap to the nearest horizontal edge.
+    if (centerX < window.innerWidth / 2) {
+      fabBtn.style.left = `${EDGE_PADDING}px`;
+      fabBtn.style.right = "auto";
+    } else {
+      fabBtn.style.left = "auto";
+      fabBtn.style.right = `${EDGE_PADDING}px`;
+    }
+
+    // Keep the button inside the screen.
+    const maxTop = Math.max(
+      EDGE_PADDING,
+      window.innerHeight - rect.height - BOTTOM_NAV_SPACE
+    );
+
+    fabBtn.style.top = `${
+      Math.max(EDGE_PADDING, Math.min(rect.top, maxTop))
+    }px`;
+
+    fabBtn.style.bottom = "auto";
+
+    // Prevent dragging from opening the New Chat modal.
+    fabBtn.addEventListener(
+      "click",
+      (clickEvent) => {
+        clickEvent.preventDefault();
+        clickEvent.stopImmediatePropagation();
+      },
+      { capture: true, once: true }
+    );
+
+    isDragging = false;
+  });
+
+  fabBtn.addEventListener("pointercancel", () => {
+    fabBtn.classList.remove("dragging");
+    isDragging = false;
+  });
+}

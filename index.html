@@ -129,30 +129,12 @@
     <div class="create-opts">
 
       <button class="create-opt nx-t-violet" data-mode="text">
-        <div class="create-opt-ic">
-          <span class="material-symbols-outlined">edit</span>
-        </div>
-
-        <b>Text</b>
-        <small>Type a text status</small>
+        <div class="create-opt-ic"><span class="material-symbols-outlined">edit</span></div>
+        <b>Text</b><small>Share a thought</small>
       </button>
-
-      <button class="create-opt nx-t-cyan" data-mode="image">
-        <div class="create-opt-ic">
-          <span class="material-symbols-outlined">photo_camera</span>
-        </div>
-
-        <b>Photo</b>
-        <small>Camera or gallery</small>
-      </button>
-
-      <button class="create-opt nx-t-pink" data-mode="video">
-        <div class="create-opt-ic">
-          <span class="material-symbols-outlined">videocam</span>
-        </div>
-
-        <b>Video</b>
-        <small>Record or pick</small>
+      <button class="create-opt nx-t-cyan" data-mode="media">
+        <div class="create-opt-ic"><span class="material-symbols-outlined">perm_media</span></div>
+        <b>Media</b><small>Photos and videos</small>
       </button>
 
     </div>
@@ -200,14 +182,30 @@
     <!-- PHOTO / VIDEO MODE -->
     <div class="create-status-body media" id="mediaMode" hidden>
 
-      <div class="media-preview" id="mediaPreview"></div>
-
-      <input
-        type="text"
-        id="mediaCaption"
-        placeholder="Add a caption…"
-        maxlength="300"
-      >
+      <div class="status-media-actions">
+        <button type="button" class="status-media-action" id="chooseStatusMedia"><span class="material-symbols-outlined">photo_library</span> Choose photos/videos</button>
+        <button type="button" class="status-media-action" id="captureStatusPhoto"><span class="material-symbols-outlined">photo_camera</span> Take photo</button>
+        <button type="button" class="status-media-action" id="recordStatusVideo"><span class="material-symbols-outlined">videocam</span> Record video</button>
+      </div>
+      <input type="file" id="statusMediaPicker" accept="image/*,video/*" multiple hidden>
+      <input type="file" id="statusPhotoCapture" accept="image/*" capture="environment" hidden>
+      <input type="file" id="statusVideoCapture" accept="video/*" capture="environment" hidden>
+      <div class="media-preview" id="mediaPreview"><div class="status-media-empty"><span class="material-symbols-outlined">add_photo_alternate</span><b>Add photos and videos</b><small>Select multiple items, then edit each one before posting.</small></div></div>
+      <div class="status-media-count" id="statusMediaCount">No media selected</div>
+      <label class="status-edit-label" for="mediaCaption">Text on this item</label>
+      <input type="text" id="mediaCaption" placeholder="Add text over this photo/video…" maxlength="300">
+      <div class="status-overlay-controls">
+        <label class="status-toggle"><input type="checkbox" id="overlayBackgroundToggle"> <span>Text background</span></label>
+        <div class="overlay-bg-swatches" id="overlayBgSwatches" aria-label="Text background colour">
+          <button type="button" data-bg="dark" class="on" aria-label="Dark background"></button>
+          <button type="button" data-bg="cyan" aria-label="Cyan background"></button>
+          <button type="button" data-bg="purple" aria-label="Purple background"></button>
+          <button type="button" data-bg="light" aria-label="Light background"></button>
+        </div>
+      </div>
+      <label class="status-edit-label" for="mediaCaptionDescription">Caption</label>
+      <textarea id="mediaCaptionDescription" placeholder="Add a caption…" maxlength="700" rows="2"></textarea>
+      <div class="status-media-note">Select a thumbnail to edit that item. Swipe the preview or use the thumbnails to move between items.</div>
 
     </div>
 
@@ -245,6 +243,7 @@
       <div class="v-user" id="vUser"></div>
 
       <span class="v-time" id="vTime"></span>
+      <button class="v-header-share" id="vShareBtn" aria-label="Share status"><span class="material-symbols-outlined">share</span></button>
 
     </div>
 
@@ -268,6 +267,20 @@
 
     <div class="v-caption" id="vCaption"></div>
 
+    <div class="v-reply-bar" id="vReplyBar">
+      <div class="v-reactions" aria-label="React to status">
+        <button type="button" data-reaction="❤️" aria-label="Love">❤️</button>
+        <button type="button" data-reaction="😂" aria-label="Laugh">😂</button>
+        <button type="button" data-reaction="😮" aria-label="Wow">😮</button>
+        <button type="button" data-reaction="👏" aria-label="Clap">👏</button>
+        <button type="button" data-reaction="🔥" aria-label="Fire">🔥</button>
+      </div>
+      <form id="vReplyForm" class="v-reply-form">
+        <input id="vReplyInput" maxlength="500" placeholder="Reply to status…" autocomplete="off">
+        <button type="submit" aria-label="Send reply"><span class="material-symbols-outlined">send</span></button>
+      </form>
+      <div class="v-reaction-note" id="vReactionNote" aria-live="polite"></div>
+    </div>
 
     <!-- OWN STATUS TOOLS -->
     <div class="v-toolbar" id="vToolbar">
@@ -405,6 +418,11 @@
 
       </label>
 
+    </div>
+    <div class="privacy-contact-picker" id="privacyContactPicker" hidden>
+      <div class="privacy-picker-heading"><b id="privacyPickerTitle">Choose contacts</b><small id="privacyPickerHint">Only accepted contacts are listed.</small></div>
+      <div class="privacy-contact-list" id="privacyContactList"></div>
+      <button type="button" class="post-status-btn privacy-save-btn" id="savePrivacySelection">Save audience</button>
     </div>
 
   </div>
@@ -1239,6 +1257,7 @@
 <script type="module" src="script.js"></script>
 
 <script type="module" src="netchat-upgrades.js"></script>
+<script src="emoji-picker-bridge.js" defer></script>
 <script src="vera-config.js"></script>
 <script type="module" src="vera.js"></script>
 
