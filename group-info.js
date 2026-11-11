@@ -462,7 +462,7 @@ function disappearingLabel() {
 }
 function renderDisappearing() {
   const current = Number(state.group.disappearingSeconds || 0);
-  const options = [[0, "Off", "Messages remain in the chat"], [3600, "1 hour", "New messages disappear after 1 hour"], [86400, "24 hours", "New messages disappear after 24 hours"], [604800, "7 days", "New messages disappear after 7 days"]];
+  const options = [[0, "Off", "Messages remain in the chat"], [86400, "24 hours", "New messages disappear after 24 hours"], [604800, "7 days", "New messages disappear after 7 days"], [7776000, "90 days", "New messages disappear after 90 days"]];
   body.innerHTML = `<div class="gi-description-hero">${icon("history")}<h3>Disappearing messages</h3><p>This timer applies to new messages. Existing messages are not changed.</p></div><section class="gi-section">${options.map(([seconds, label, description]) => `<button type="button" class="gi-choice ${current === seconds ? "selected" : ""}" data-action="set-disappearing" data-seconds="${seconds}" ${!isAdmin() ? "disabled" : ""}><span><b>${label}</b><small>${description}</small></span>${icon(current === seconds ? "check_circle" : "radio_button_unchecked")}</button>`).join("")}</section>${!isAdmin() ? `<p class="gi-permission-note">Only group admins can change this timer.</p>` : ""}`;
 }
 

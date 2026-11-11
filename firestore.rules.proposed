@@ -1,204 +1,669 @@
 rules_version = '2';
-// PROPOSED ONLY — the deployed rules and a production data export were not supplied.
-// Review every existing collection/field and test with the Firebase emulator before deploying.
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() { return request.auth != null; }
-    function uid() { return request.auth.uid; }
-    function userRef(userId) { return /databases/$(database)/documents/user/$(userId); }
-    function chatRef(chatId) { return /databases/$(database)/documents/chats/$(chatId); }
-    function chatData(chatId) { return get(chatRef(chatId)).data; }
-    function isParticipant(chatId) {
-      return signedIn() && uid() in chatData(chatId).participants;
-    }
-    function isGroupAdmin(chatId) {
-      return isParticipant(chatId)
-        && (chatData(chatId).createdBy == uid() || uid() in chatData(chatId).admins);
-    }
-    function isCommunityMember(communityId) {
-      return signedIn() && exists(/databases/$(database)/documents/communities/$(communityId)/members/$(uid()));
-    }
-    function isCommunityOwner(communityId) {
-      return signedIn() && get(/databases/$(database)/documents/communities/$(communityId)).data.ownerId == uid();
-    }
-    function validNewChat() {
-      return signedIn()
-        && request.resource.data.participants is list
-        && request.resource.data.participants.size() >= 2
-        && request.resource.data.participants.size() <= 100
-        && uid() in request.resource.data.participants
-        && (request.resource.data.isGroup != true || request.resource.data.createdBy == uid());
-    }
-    function participantMetadataUpdate(chatId) {
-      return isParticipant(chatId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-        'lastMessage', 'lastMessageSenderId', 'lastMessageAt', 'lastMessageStatus', 'lastMessageId',
-        'unreadCount', 'archivedFor', 'pinnedFor', 'mutedBy', 'updatedAt'
-      ]);
-    }
-    function selfExitUpdate(chatId) {
-      return isParticipant(chatId)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['participants', 'admins'])
-        && !(uid() in request.resource.data.participants)
-        && request.resource.data.participants.size() == resource.data.participants.size() - 1;
-    }
-    function adminGroupUpdate(chatId) {
-      return isGroupAdmin(chatId)
-        && request.resource.data.createdBy == resource.data.createdBy
-        && request.resource.data.ownerId == resource.data.ownerId
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['groupDeleted'])
-            || resource.data.createdBy == uid())
-        && (resource.data.createdBy in request.resource.data.participants
-            || request.resource.data.admins.size() > 0);
-    }
-    function ownReactionOnly() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])
-        && request.resource.data.reactions.diff(resource.data.reactions).affectedKeys().hasOnly([uid()]);
-    }
-    function ownPollVoteOnly() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['poll'])
-        && request.resource.data.poll.diff(resource.data.poll).affectedKeys().hasOnly(['votes'])
-        && request.resource.data.poll.votes.diff(resource.data.poll.votes).affectedKeys().hasOnly([uid()]);
-    }
-    function readStateOnly() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-        'readBy', 'deliveredBy', 'status', 'readAt', 'deliveredAt', 'hiddenFor', 'starredBy', 'stars'
-      ]);
+    function signedIn() {
+      return request.auth != null;
     }
 
-    // The profile directory is searchable by signed-in users. Sensitive fields should
-    // not be added to public profile documents; use private per-user subcollections.
+    function isOwner(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function chatExists(conversationId) {
+      return exists(/databases/$(database)/documents/chats/$(conversationId));
+    }
+
+    function chatData(conversationId) {
+      return get(/databases/$(database)/documents/chats/$(conversationId)).data;
+    }
+
+    function isChatParticipant(conversationId) {
+      return signedIn()
+        && chatExists(conversationId)
+        && chatData(conversationId).get('participants', []) is list
+        && chatData(conversationId).participants.hasAny([request.auth.uid]);
+    }
+
+    function isGroupChat(data) {
+      return data.get('isGroup', false) == true || data.get('type', '') == 'group';
+    }
+
+    function noBlockBetween(uidA, uidB) {
+      return !exists(/databases/$(database)/documents/user/$(uidA)/blockedUsers/$(uidB))
+        && !exists(/databases/$(database)/documents/user/$(uidB)/blockedUsers/$(uidA));
+    }
+
+    function directChatAllowsMessage(conversationId) {
+      let participants = chatData(conversationId).get('participants', []);
+      let otherUid = participants[0] == request.auth.uid ? participants[1] : participants[0];
+      return isGroupChat(chatData(conversationId)) || noBlockBetween(request.auth.uid, otherUid);
+    }
+
+    function isGroupAdminData(data) {
+      return signedIn() && (
+        data.get('createdBy', '') == request.auth.uid
+        || data.get('ownerId', '') == request.auth.uid
+        || (data.get('admins', []) is list && data.admins.hasAny([request.auth.uid]))
+      );
+    }
+
+    function onlyOwnArrayItemChanged(fieldName) {
+      let before = resource.data.get(fieldName, []);
+      let after = request.resource.data.get(fieldName, []);
+      return before is list && after is list
+        && (
+          (after.size() == before.size() + 1 && after.hasAll(before)
+            && !before.hasAny([request.auth.uid]) && after.hasAny([request.auth.uid]))
+          ||
+          (after.size() + 1 == before.size() && before.hasAll(after)
+            && before.hasAny([request.auth.uid]) && !after.hasAny([request.auth.uid]))
+        );
+    }
+
+    function onlyParticipantAdded() {
+      let before = resource.data.participants;
+      let after = request.resource.data.participants;
+      return after is list && after.size() == before.size() + 1
+        && after.hasAll(before);
+    }
+
+    function onlyParticipantRemoved(uid) {
+      let before = resource.data.participants;
+      let after = request.resource.data.participants;
+      return after is list && after.size() + 1 == before.size()
+        && before.hasAll(after) && before.hasAny([uid]) && !after.hasAny([uid]);
+    }
+
+    function ownMapKeyChanged(fieldName) {
+      let before = resource.data.get(fieldName, {});
+      let after = request.resource.data.get(fieldName, {});
+      return before is map
+        && after is map
+        && after.diff(before).affectedKeys().hasOnly([request.auth.uid]);
+    }
+
+    function onlyHideForSelf() {
+      let before = resource.data.get('hiddenFor', []);
+      let after = request.resource.data.get('hiddenFor', []);
+      return before is list
+        && after is list
+        && after.hasAll(before)
+        && (
+          after.size() == before.size()
+          || (
+            after.size() == before.size() + 1
+            && !before.hasAny([request.auth.uid])
+            && after.hasAny([request.auth.uid])
+          )
+        );
+    }
+
+    function isCallParticipant(callId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/calls/$(callId))
+        && (
+          get(/databases/$(database)/documents/calls/$(callId)).data.get('offer', {}).get('callerId', '') == request.auth.uid
+          || get(/databases/$(database)/documents/calls/$(callId)).data.get('offer', {}).get('receiverId', '') == request.auth.uid
+        );
+    }
+
+    function acceptedContactPair(userId, contactId) {
+      let requestPath = /databases/$(database)/documents/contactRequests/$(userId + '_' + contactId);
+      return signedIn()
+        && request.auth.uid == contactId
+        && existsAfter(requestPath)
+        && getAfter(requestPath).data.fromUid == userId
+        && getAfter(requestPath).data.toUid == contactId
+        && getAfter(requestPath).data.status == 'accepted';
+    }
+
+    // USER PROFILES. Keep only public/discoverable fields in these documents.
     match /user/{userId} {
-      allow read: if signedIn();
-      allow create: if signedIn() && uid() == userId
-        && request.resource.data.userFullname is string
-        && request.resource.data.userFullname.size() >= 2
-        && request.resource.data.userFullname.size() <= 60;
-      allow update: if signedIn() && uid() == userId
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['netChatID', 'userEmail'])
-            || (request.resource.data.netChatID == resource.data.netChatID
-                && request.resource.data.userEmail == resource.data.userEmail));
-      allow delete: if false;
+      allow get, list: if signedIn();
+      allow create, update, delete: if isOwner(userId);
+
+      match /chatLists/{listId} {
+        allow read, create, update, delete: if isOwner(userId);
+      }
+
+      match /stickers/{stickerId} {
+        allow read, create, update, delete: if isOwner(userId);
+      }
+
+      match /statuses/{statusId} {
+        function acceptedStatusContact() {
+          return signedIn()
+            && exists(/databases/$(database)/documents/user/$(userId)/contacts/$(request.auth.uid))
+            && get(/databases/$(database)/documents/user/$(userId)/contacts/$(request.auth.uid)).data.get('status', '') == 'accepted';
+        }
+        function statusAudienceAllowsViewer() {
+          let ownerData = get(/databases/$(database)/documents/user/$(userId)).data;
+          let privacy = ownerData.get('statusPrivacy', {});
+          let mode = privacy.get('mode', 'contacts');
+          return acceptedStatusContact()
+            && (mode == 'contacts'
+              || (mode == 'except' && !(privacy.get('excluded', []) is list && privacy.get('excluded', []).hasAny([request.auth.uid])))
+              || (mode == 'only' && privacy.get('included', []) is list && privacy.get('included', []).hasAny([request.auth.uid])));
+        }
+        allow read: if isOwner(userId) || statusAudienceAllowsViewer();
+        allow create: if isOwner(userId)
+          && request.resource.data.keys().hasOnly([
+            'text', 'media', 'type', 'createdAt', 'expiresAt',
+            'caption', 'background', 'mediaUrl', 'mime', 'textOverlay',
+            'batchIndex', 'batchSize', 'textOverlayBg', 'textOverlayBgEnabled',
+            'textOverlayX', 'textOverlayY'
+          ]);
+        allow update, delete: if isOwner(userId);
+
+        match /reactions/{reactorUid} {
+          allow read: if isOwner(userId) || statusAudienceAllowsViewer();
+          allow create, update: if signedIn() && request.auth.uid == reactorUid
+            && (isOwner(userId) || statusAudienceAllowsViewer())
+            && request.resource.data.keys().hasOnly(['uid', 'reaction', 'createdAt'])
+            && request.resource.data.uid == request.auth.uid
+            && request.resource.data.reaction in ['❤️', '😂', '😮', '👏', '🔥'];
+          allow delete: if signedIn() && request.auth.uid == reactorUid;
+        }
+
+        match /replies/{replyId} {
+          allow read: if isOwner(userId) || statusAudienceAllowsViewer();
+          allow create: if signedIn() && (isOwner(userId) || statusAudienceAllowsViewer())
+            && request.resource.data.keys().hasOnly(['uid', 'text', 'createdAt'])
+            && request.resource.data.uid == request.auth.uid
+            && request.resource.data.text is string
+            && request.resource.data.text.size() > 0
+            && request.resource.data.text.size() <= 500;
+          allow update, delete: if isOwner(userId)
+            || (signedIn() && resource.data.uid == request.auth.uid);
+        }
+
+        match /viewers/{viewerId} {
+          allow read: if signedIn()
+            && (isOwner(userId) || request.auth.uid == viewerId);
+          allow create, update: if signedIn() && request.auth.uid == viewerId;
+          allow delete: if signedIn()
+            && (isOwner(userId) || request.auth.uid == viewerId);
+        }
+      }
 
       match /contacts/{contactId} {
-        allow read, write: if signedIn() && uid() == userId;
-        // Accepting a request creates the reciprocal contact document.
-        allow create: if signedIn() && uid() == contactId
-          && exists(/databases/$(database)/documents/contactRequests/$(userId + '_' + contactId))
-          && get(/databases/$(database)/documents/contactRequests/$(userId + '_' + contactId)).data.toUid == userId
-          && get(/databases/$(database)/documents/contactRequests/$(userId + '_' + contactId)).data.status == 'pending';
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId) || acceptedContactPair(userId, contactId);
+        allow delete: if isOwner(userId);
       }
+
+      match /communities/{communityId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /communityMemberships/{communityId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+          && existsAfter(/databases/$(database)/documents/communities/$(communityId)/members/$(userId));
+        allow delete: if isOwner(userId);
+      }
+
       match /communityInvites/{communityId} {
-        allow read, update, delete: if signedIn() && uid() == userId;
-        allow create: if signedIn() && (uid() == userId || isCommunityOwner(communityId));
+        allow read, delete: if isOwner(userId);
+        allow create, update: if signedIn()
+          && request.resource.data.communityId == communityId
+          && exists(/databases/$(database)/documents/communities/$(communityId))
+          && get(/databases/$(database)/documents/communities/$(communityId)).data.ownerId == request.auth.uid;
       }
-      match /{document=**} {
-        allow read, write: if signedIn() && uid() == userId;
+
+      match /appStats/{statId} {
+        allow read, write: if isOwner(userId);
       }
-    }
 
-    match /contactRequests/{requestId} {
-      allow read: if signedIn() && (resource.data.fromUid == uid() || resource.data.toUid == uid());
-      allow create: if signedIn() && request.resource.data.fromUid == uid()
-        && request.resource.data.toUid is string && request.resource.data.toUid != uid()
-        && request.resource.data.status == 'pending';
-      allow update: if signedIn() && resource.data.toUid == uid()
-        && resource.data.status == 'pending'
-        && request.resource.data.fromUid == resource.data.fromUid
-        && request.resource.data.toUid == resource.data.toUid
-        && request.resource.data.status in ['accepted', 'declined'];
-      allow delete: if false;
-    }
+      match /blockedUsers/{blockedUserId} {
+        // The owner manages their block list; a blocked person may only check
+        // their own deterministic block document to show a blocked notice.
+        allow get: if isOwner(userId) || (signedIn() && request.auth.uid == blockedUserId);
+        allow list: if isOwner(userId);
+        allow create, update, delete: if isOwner(userId);
+      }
 
-    match /systemInbox/{userId}/items/{itemId} {
-      allow read, update: if signedIn() && uid() == userId;
-      allow create: if signedIn() && request.resource.data.type == 'contact_request'
-        && exists(/databases/$(database)/documents/contactRequests/$(itemId))
-        && get(/databases/$(database)/documents/contactRequests/$(itemId)).data.fromUid == uid()
-        && get(/databases/$(database)/documents/contactRequests/$(itemId)).data.toUid == userId;
-      allow delete: if false;
-    }
+      match /reports/{reportId} {
+        allow create: if isOwner(userId);
+        allow read, update, delete: if isOwner(userId);
+      }
 
-    match /chats/{chatId} {
-      allow read: if isParticipant(chatId);
-      allow create: if validNewChat();
-      allow update: if participantMetadataUpdate(chatId) || selfExitUpdate(chatId)
-        || (chatData(chatId).isGroup == true && adminGroupUpdate(chatId));
-      allow delete: if false;
-
-      match /messages/{messageId} {
-        allow read: if isParticipant(chatId);
-        allow create: if isParticipant(chatId)
-          && request.resource.data.senderId == uid()
-          && (chatData(chatId).onlyAdminsCanMessage != true || isGroupAdmin(chatId))
-          && request.resource.data.text is string
-          && request.resource.data.text.size() <= 10000;
-        allow update: if isParticipant(chatId) && (
-          ownReactionOnly() || ownPollVoteOnly() || readStateOnly()
-          || (resource.data.senderId == uid() && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'text', 'media', 'deleted', 'deletedAt', 'editedAt', 'expiresAt'
-          ]))
-        );
-        allow delete: if false;
+      match /archivedChats/{chatId} {
+        allow read, write: if isOwner(userId);
       }
     }
 
-    // Existing two-party WebRTC signaling. This does not authorize or create group calls.
-    match /calls/{callId} {
-      allow read: if signedIn() && (resource.data.offer.callerId == uid() || resource.data.offer.receiverId == uid());
-      allow create: if signedIn() && request.resource.data.offer.callerId == uid()
-        && request.resource.data.offer.receiverId is string
-        && request.resource.data.offer.receiverId != uid()
-        && request.resource.data.offer.callType in ['voice', 'video'];
-      allow update: if signedIn() && (resource.data.offer.callerId == uid() || resource.data.offer.receiverId == uid())
-        && request.resource.data.offer.callerId == resource.data.offer.callerId
-        && request.resource.data.offer.receiverId == resource.data.offer.receiverId;
-      allow delete: if signedIn() && resource.data.offer.callerId == uid();
-      match /{candidates}/{candidateId} {
-        allow read, create: if signedIn()
-          && (get(/databases/$(database)/documents/calls/$(callId)).data.offer.callerId == uid()
-              || get(/databases/$(database)/documents/calls/$(callId)).data.offer.receiverId == uid());
-        allow update, delete: if false;
-      }
+    // SHARED COMMUNITIES: public directory, private invitations, members, and linked group chats.
+    function communityExists(communityId) {
+      return exists(/databases/$(database)/documents/communities/$(communityId));
+    }
+
+    function isCommunityOwner(communityId) {
+      return signedIn() && communityExists(communityId)
+        && get(/databases/$(database)/documents/communities/$(communityId)).data.ownerId == request.auth.uid;
+    }
+
+    function isCommunityMember(communityId) {
+      return signedIn() && exists(/databases/$(database)/documents/communities/$(communityId)/members/$(request.auth.uid));
     }
 
     match /communities/{communityId} {
-      allow read: if signedIn() && (resource.data.visibility == 'public' || isCommunityMember(communityId)
-        || isCommunityOwner(communityId)
-        || exists(/databases/$(database)/documents/user/$(uid())/communityInvites/$(communityId)));
-      allow create: if signedIn() && request.resource.data.ownerId == uid()
+      // Public directory queries must include visibility == "public".
+      allow list: if signedIn() && resource.data.visibility == 'public' && resource.data.get('deleted', false) != true;
+      allow get: if signedIn() && resource.data.get('deleted', false) != true
+        && (resource.data.visibility == 'public' || resource.data.ownerId == request.auth.uid || isCommunityMember(communityId) || exists(/databases/$(database)/documents/communities/$(communityId)/invites/$(request.auth.uid)));
+      allow create: if signedIn()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
         && request.resource.data.visibility in ['public', 'private']
-        && request.resource.data.name is string && request.resource.data.name.size() <= 60;
-      allow update: if isCommunityOwner(communityId);
+        && request.resource.data.deleted == false;
+      allow update: if isCommunityOwner(communityId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted', 'deletedAt'])
+        && request.resource.data.deleted == true;
       allow delete: if false;
 
-      match /members/{memberId} {
-        allow read: if isCommunityMember(communityId);
-        allow create: if signedIn() && (isCommunityOwner(communityId)
-          || (uid() == memberId && (get(/databases/$(database)/documents/communities/$(communityId)).data.visibility == 'public'
-              || exists(/databases/$(database)/documents/communities/$(communityId)/invites/$(uid()))));
-        allow update, delete: if isCommunityOwner(communityId) || (signedIn() && uid() == memberId);
+      match /members/{memberUid} {
+        allow get, list: if isCommunityOwner(communityId) || isCommunityMember(communityId);
+        allow create: if signedIn() && memberUid == request.resource.data.uid
+          && memberUid == request.auth.uid
+          && (
+            isCommunityOwner(communityId)
+            || (existsAfter(/databases/$(database)/documents/communities/$(communityId))
+              && getAfter(/databases/$(database)/documents/communities/$(communityId)).data.ownerId == request.auth.uid)
+            || (communityExists(communityId)
+              && get(/databases/$(database)/documents/communities/$(communityId)).data.visibility == 'public'
+              && get(/databases/$(database)/documents/communities/$(communityId)).data.get('deleted', false) != true)
+            || exists(/databases/$(database)/documents/communities/$(communityId)/invites/$(request.auth.uid))
+          );
+        allow update: if isCommunityOwner(communityId)
+          && request.resource.data.uid == resource.data.uid
+          && request.resource.data.role in ['owner', 'admin', 'member'];
+        allow delete: if isCommunityOwner(communityId) || (signedIn() && memberUid == request.auth.uid);
       }
-      match /invites/{inviteeId} {
-        allow read: if isCommunityOwner(communityId) || (signedIn() && uid() == inviteeId);
-        allow create, update: if isCommunityOwner(communityId);
-        allow delete: if isCommunityOwner(communityId) || (signedIn() && uid() == inviteeId);
+
+      match /invites/{inviteeUid} {
+        allow get: if signedIn() && (request.auth.uid == inviteeUid || isCommunityOwner(communityId));
+        allow list: if isCommunityOwner(communityId);
+        allow create, update: if isCommunityOwner(communityId)
+          && inviteeUid == request.resource.data.inviteeUid
+          && inviteeUid != request.auth.uid
+          && request.resource.data.invitedBy == request.auth.uid;
+        allow delete: if signedIn() && (request.auth.uid == inviteeUid || isCommunityOwner(communityId));
       }
+
       match /groups/{chatId} {
-        allow read: if isCommunityMember(communityId);
-        allow create: if isCommunityMember(communityId) && request.resource.data.createdBy == uid()
-          && request.resource.data.chatId == chatId;
+        allow read: if isCommunityOwner(communityId) || isCommunityMember(communityId);
+        allow create: if (isCommunityOwner(communityId) || isCommunityMember(communityId))
+          && request.resource.data.chatId == chatId
+          && existsAfter(/databases/$(database)/documents/chats/$(chatId))
+          && getAfter(/databases/$(database)/documents/chats/$(chatId)).data.get('communityId', '') == communityId
+          && getAfter(/databases/$(database)/documents/chats/$(chatId)).data.get('createdBy', '') == request.auth.uid;
         allow update, delete: if isCommunityOwner(communityId);
       }
     }
 
-    // Status documents are readable by the signed-in social graph. Client-side contact
-    // filtering is retained for compatibility; tighten queries before restricting reads further.
-    match /statuses/{statusId} {
-      allow read: if signedIn();
-      allow create: if signedIn() && request.resource.data.userId == uid();
-      allow update, delete: if signedIn() && resource.data.userId == uid();
+    // CONTACT REQUESTS. Permit a signed-in user to read a missing request
+    // document while checking the two deterministic request IDs they use.
+    match /contactRequests/{requestId} {
+      allow create: if signedIn()
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.toUid is string
+        && request.resource.data.toUid != request.auth.uid
+        && noBlockBetween(request.auth.uid, request.resource.data.toUid)
+        && request.resource.data.status == 'pending'
+        && requestId == request.resource.data.fromUid + '_' + request.resource.data.toUid;
+
+      allow get: if signedIn() && (
+        resource == null
+        || resource.data.fromUid == request.auth.uid
+        || resource.data.toUid == request.auth.uid
+      );
+      allow list: if signedIn()
+        && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
+
+      allow update: if signedIn()
+        && noBlockBetween(resource.data.fromUid, resource.data.toUid)
+        && request.resource.data.fromUid == resource.data.fromUid
+        && request.resource.data.toUid == resource.data.toUid
+        && requestId == resource.data.fromUid + '_' + resource.data.toUid
+        && (
+          (resource.data.toUid == request.auth.uid
+            && resource.data.status == 'pending'
+            && request.resource.data.status in ['accepted', 'declined'])
+          ||
+          (resource.data.fromUid == request.auth.uid
+            && resource.data.status in ['declined', 'rejected']
+            && request.resource.data.status == 'pending')
+        );
+      allow delete: if false;
     }
 
-    match /{document=**} { allow read, write: if false; }
+    // PRIVATE SYSTEM INBOX
+    match /systemInbox/{userId}/items/{itemId} {
+      allow read: if isOwner(userId);
+      allow create: if signedIn()
+        && request.resource.data.type == 'contact_request'
+        && request.resource.data.fromUid == request.auth.uid
+        && exists(/databases/$(database)/documents/contactRequests/$(itemId))
+        && get(/databases/$(database)/documents/contactRequests/$(itemId)).data.fromUid == request.auth.uid
+        && get(/databases/$(database)/documents/contactRequests/$(itemId)).data.toUid == userId;
+      allow update: if isOwner(userId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'read', 'resolved', 'resolution', 'resolvedAt'
+        ]);
+      allow delete: if isOwner(userId);
+    }
+
+    // CHATS
+    match /chats/{conversationId} {
+      // A signed-in user may check whether a deterministic chat document exists;
+      // if it exists, reads are limited to participants. This is needed because
+      // script.js checks a direct-chat document before creating the first message.
+      allow get: if signedIn() && (
+        resource == null
+        || (
+          resource.data.get('participants', []) is list
+          && resource.data.participants.hasAny([request.auth.uid])
+        )
+      );
+      // Use the same membership expression as the array-contains query.
+      // Firestore must be able to prove every possible query result is readable.
+      allow list: if signedIn()
+        && request.auth.uid in resource.data.participants;
+
+      // Direct chats use a deterministic sorted UID pair. Group chats use an
+      // auto ID and must be created by a participant who becomes their creator.
+      allow create: if signedIn()
+        && request.resource.data.participants is list
+        && request.resource.data.participants.size() >= 2
+        && request.resource.data.participants.size() <= 100
+        && request.resource.data.participants.hasAny([request.auth.uid])
+        && (
+          (
+            !isGroupChat(request.resource.data)
+            && request.resource.data.participants.size() == 2
+            && request.resource.data.participants[0] != request.resource.data.participants[1]
+            && noBlockBetween(request.resource.data.participants[0], request.resource.data.participants[1])
+            && conversationId == (
+              request.resource.data.participants[0] < request.resource.data.participants[1]
+                ? request.resource.data.participants[0] + '_' + request.resource.data.participants[1]
+                : request.resource.data.participants[1] + '_' + request.resource.data.participants[0]
+            )
+          )
+          ||
+          (
+            isGroupChat(request.resource.data)
+            && request.resource.data.get('createdBy', '') == request.auth.uid
+            && request.resource.data.get('groupName', '') is string
+          )
+        );
+
+      allow update: if isChatParticipant(conversationId)
+        && (
+          // Chat previews and unread counters used by the established send flow.
+          (request.resource.data.participants == resource.data.participants
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'lastMessage', 'lastMessageSenderId', 'lastMessageAt',
+              'lastMessageStatus', 'lastMessageId', 'unreadCount'
+            ]))
+          ||
+          // Per-user maps may be changed together with normal message metadata.
+          (request.resource.data.participants == resource.data.participants
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'lastMessage', 'lastMessageSenderId', 'lastMessageAt',
+              'lastMessageStatus', 'lastMessageId', 'unreadCount',
+              'favorites', 'clearedFor', 'hiddenLastMessageFor'
+            ])
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['favorites'])
+              || ownMapKeyChanged('favorites'))
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['clearedFor'])
+              || ownMapKeyChanged('clearedFor'))
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['hiddenLastMessageFor'])
+              || ownMapKeyChanged('hiddenLastMessageFor')))
+          ||
+          // Mute and pin are private per-member preferences. Mute can expire at a timestamp or be indefinite (null).
+          (request.resource.data.participants == resource.data.participants
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['mutedBy', 'pinnedBy', 'muteUntil'])
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['mutedBy'])
+              || onlyOwnArrayItemChanged('mutedBy'))
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['pinnedBy'])
+              || onlyOwnArrayItemChanged('pinnedBy'))
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['muteUntil'])
+              || ownMapKeyChanged('muteUntil')))
+          ||
+          (request.resource.data.participants == resource.data.participants
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['disappearingSeconds'])
+            && isGroupChat(resource.data) && isGroupAdminData(resource.data)
+            && request.resource.data.disappearingSeconds is number
+            && request.resource.data.disappearingSeconds in [0, 86400, 604800, 7776000])
+          ||
+          // PERSONAL disappearing messages: each member only writes their own key (any chat type).
+          (request.resource.data.participants == resource.data.participants
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['disappearingBy'])
+            && ownMapKeyChanged('disappearingBy'))
+          ||
+          // MUTUAL disappearing messages in private chats: a request is sent by one person and the
+          // timer only becomes shared when the OTHER person accepts that exact request.
+          (request.resource.data.participants == resource.data.participants
+            && !isGroupChat(resource.data)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['disappearingBy', 'disappearingRequest', 'disappearingSeconds'])
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['disappearingBy'])
+              || ownMapKeyChanged('disappearingBy'))
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['disappearingSeconds'])
+              || (request.resource.data.disappearingSeconds is number
+                && request.resource.data.disappearingSeconds in [0, 86400, 604800, 7776000]
+                && (request.resource.data.disappearingSeconds == 0
+                  || (resource.data.get('disappearingRequest', null) != null
+                    && resource.data.disappearingRequest.status == 'pending'
+                    && resource.data.disappearingRequest.from != request.auth.uid
+                    && request.resource.data.disappearingSeconds == resource.data.disappearingRequest.seconds))))
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['disappearingRequest'])
+              || (request.resource.data.disappearingRequest.from == request.auth.uid
+                && request.resource.data.disappearingRequest.status in ['pending', 'cancelled']
+                && request.resource.data.disappearingRequest.seconds in [0, 86400, 604800, 7776000])
+              || (resource.data.get('disappearingRequest', null) != null
+                && resource.data.disappearingRequest.from != request.auth.uid
+                && request.resource.data.disappearingRequest.from == resource.data.disappearingRequest.from
+                && request.resource.data.disappearingRequest.status in ['accepted', 'rejected'])))
+          ||
+          // Group info uses the stored role/permission data, never a browser role claim.
+          (request.resource.data.participants == resource.data.participants
+            && isGroupChat(resource.data)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['groupName', 'groupDescription', 'groupImage'])
+            && (isGroupAdminData(resource.data) || resource.data.get('memberCanEditInfo', false) == true)
+            && request.resource.data.groupName is string
+            && request.resource.data.groupName.size() > 0
+            && request.resource.data.groupName.size() <= 60
+            && request.resource.data.get('groupDescription', '') is string
+            && request.resource.data.get('groupDescription', '').size() <= 240
+            && request.resource.data.get('groupImage', '') is string)
+          ||
+          (request.resource.data.participants == resource.data.participants
+            && isGroupChat(resource.data) && isGroupAdminData(resource.data)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'onlyAdminsCanMessage', 'memberCanAddOthers', 'memberCanEditInfo'
+            ]))
+          ||
+          // Admins can promote/demote, but never remove the owner or the final admin.
+          (request.resource.data.participants == resource.data.participants
+            && isGroupChat(resource.data) && isGroupAdminData(resource.data)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['admins'])
+            && request.resource.data.admins is list
+            && request.resource.data.participants.hasAll(request.resource.data.admins)
+            && request.resource.data.admins.size() > 0
+            && (!resource.data.admins.hasAny([resource.data.createdBy])
+              || request.resource.data.admins.hasAny([resource.data.createdBy])))
+          ||
+          // Per-chat theme preferences are private to the member changing their own map key.
+          (request.resource.data.participants == resource.data.participants
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['chatThemeBy'])
+            && ownMapKeyChanged('chatThemeBy'))
+          ||
+          (request.resource.data.participants == resource.data.participants
+            && isGroupChat(resource.data)
+            && resource.data.get('createdBy', '') == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['groupDeleted', 'deletedAt'])
+            && request.resource.data.groupDeleted == true)
+          ||
+          // Add exactly one participant when stored permissions allow it.
+          (isGroupChat(resource.data) && onlyParticipantAdded()
+            && (isGroupAdminData(resource.data) || resource.data.get('memberCanAddOthers', false) == true)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['participants', 'unreadCount']))
+          ||
+          // Leave or remove exactly one member; the owner cannot be removed.
+          (isGroupChat(resource.data)
+            && (onlyParticipantRemoved(request.auth.uid)
+              || (isGroupAdminData(resource.data)
+                && request.resource.data.participants.size() + 1 == resource.data.participants.size()
+                && resource.data.participants.hasAll(request.resource.data.participants)
+                && request.resource.data.participants.hasAny([resource.data.createdBy])))
+            && request.resource.data.participants.hasAny([resource.data.createdBy])
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['participants', 'admins'])
+            && request.resource.data.admins is list
+            && request.resource.data.participants.hasAll(request.resource.data.admins))
+        );
+
+      // Deleting a group removes it from every member's chat list. Only its
+      // creator can delete the parent document. Subcollection cleanup is a
+      // separate backend task; orphaned messages are no longer readable.
+      allow delete: if isChatParticipant(conversationId)
+        && isGroupChat(resource.data)
+        && resource.data.get('createdBy', '') == request.auth.uid;
+
+      match /messages/{messageId} {
+        allow read: if isChatParticipant(conversationId)
+          || (signedIn() && !chatExists(conversationId)
+            && (conversationId.matches('^' + request.auth.uid + '_.*$')
+              || conversationId.matches('^.*_' + request.auth.uid + '$')));
+
+        // Existing send flow writes a direct chat's first message before its
+        // parent document. Only permit this for a deterministic UID-pair ID
+        // that contains the authenticated UID.
+        allow create: if signedIn()
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.keys().hasOnly([
+            'senderId', 'text', 'media', 'timestamp', 'status', 'replyTo',
+            'expiresAt', 'type', 'poll', 'pollVotes', 'clientId', 'broadcast'
+          ])
+          && (
+            (
+              isChatParticipant(conversationId)
+              && directChatAllowsMessage(conversationId)
+              && (!isGroupChat(chatData(conversationId))
+                || chatData(conversationId).get('onlyAdminsCanMessage', false) != true
+                || isGroupAdminData(chatData(conversationId)))
+            )
+          );
+
+        allow update: if isChatParticipant(conversationId)
+          && directChatAllowsMessage(conversationId)
+          && (
+            (
+              resource.data.senderId == request.auth.uid
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'text', 'media', 'edited', 'editedAt', 'deleted',
+                'reactions', 'expiresAt', 'status', 'readAt', 'deliveredAt'
+              ])
+            )
+            ||
+            (
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'status', 'readAt', 'deliveredAt'
+              ])
+            )
+            ||
+            (
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hiddenFor'])
+              && onlyHideForSelf()
+            )
+            ||
+            (
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])
+              && ownMapKeyChanged('reactions')
+            )
+            ||
+            (
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stars'])
+              && ownMapKeyChanged('stars')
+            )
+            ||
+            (
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pollVotes'])
+              && ownMapKeyChanged('pollVotes')
+              && (
+                request.resource.data.get('pollVotes', {}).get(request.auth.uid, '') is string
+                ||
+                (request.resource.data.get('pollVotes', {}).get(request.auth.uid, []) is list
+                  && request.resource.data.pollVotes[request.auth.uid].size()
+                    <= (resource.data.get('poll', {}).get('multiple', false) == true ? 8 : 1))
+              )
+              && (!resource.data.get('poll', {}).keys().hasAny(['closesAt'])
+                || resource.data.poll.closesAt == null
+                || (resource.data.poll.closesAt is timestamp
+                  && request.time < resource.data.poll.closesAt))
+            )
+          );
+
+        // Client-side delete is intentionally disabled for messages. "Delete
+        // for me" uses hiddenFor; "Delete for everyone" is a sender-only update.
+        allow delete: if false;
+      }
+    }
+
+    // Central report inbox. Reporters can submit but cannot read or alter moderation records.
+    match /reports/{reportId} {
+      allow create: if signedIn()
+        && request.resource.data.reporterUid == request.auth.uid
+        && request.resource.data.targetUid is string
+        && request.resource.data.targetUid != request.auth.uid
+        && request.resource.data.targetType in ['user', 'group']
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() <= 1000
+        && request.resource.data.status == 'submitted';
+      allow read, update, delete: if false;
+    }
+
+    // CALLS
+    match /calls/{callId} {
+      allow create: if signedIn()
+        && request.resource.data.offer.callerId == request.auth.uid
+        && request.resource.data.offer.receiverId is string
+        && request.resource.data.offer.receiverId != request.auth.uid
+        && noBlockBetween(request.auth.uid, request.resource.data.offer.receiverId);
+
+      allow get, list: if signedIn()
+        && (
+          resource.data.offer.callerId == request.auth.uid
+          || resource.data.offer.receiverId == request.auth.uid
+        );
+
+      allow update: if isCallParticipant(callId)
+        && noBlockBetween(resource.data.offer.callerId, resource.data.offer.receiverId)
+        && request.resource.data.offer.callerId == resource.data.offer.callerId
+        && request.resource.data.offer.receiverId == resource.data.offer.receiverId;
+      allow delete: if isCallParticipant(callId);
+
+      match /{candidateCollection}/{candidateId} {
+        allow read, create: if candidateCollection in ['offerCandidates', 'answerCandidates']
+          && isCallParticipant(callId);
+        allow update, delete: if false;
+      }
+    }
+
+    // User-submitted safety reports. Only the reporter can create/read their own report.
+    match /reports/{reportId} {
+      allow create: if signedIn()
+        && request.resource.data.reporterUid == request.auth.uid
+        && request.resource.data.targetUid is string
+        && request.resource.data.targetUid != request.auth.uid
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() <= 1000
+        && request.resource.data.status == 'submitted';
+      allow get, list: if signedIn() && resource.data.reporterUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
   }
 }
