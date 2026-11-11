@@ -29,6 +29,17 @@ service cloud.firestore {
       return data.get('isGroup', false) == true || data.get('type', '') == 'group';
     }
 
+    function noBlockBetween(uidA, uidB) {
+      return !exists(/databases/$(database)/documents/user/$(uidA)/blockedUsers/$(uidB))
+        && !exists(/databases/$(database)/documents/user/$(uidB)/blockedUsers/$(uidA));
+    }
+
+    function directChatAllowsMessage(conversationId) {
+      let participants = chatData(conversationId).get('participants', []);
+      let otherUid = participants[0] == request.auth.uid ? participants[1] : participants[0];
+      return isGroupChat(chatData(conversationId)) || noBlockBetween(request.auth.uid, otherUid);
+    }
+
     function isGroupAdminData(data) {
       return signedIn() && (
         data.get('createdBy', '') == request.auth.uid
@@ -111,6 +122,10 @@ service cloud.firestore {
     match /user/{userId} {
       allow get, list: if signedIn();
       allow create, update, delete: if isOwner(userId);
+
+      match /chatLists/{listId} {
+        allow read, create, update, delete: if isOwner(userId);
+      }
 
       match /stickers/{stickerId} {
         allow read, create, update, delete: if isOwner(userId);
@@ -202,7 +217,11 @@ service cloud.firestore {
       }
 
       match /blockedUsers/{blockedUserId} {
-        allow read, write: if isOwner(userId);
+        // The owner manages their block list; a blocked person may only check
+        // their own deterministic block document to show a blocked notice.
+        allow get: if isOwner(userId) || (signedIn() && request.auth.uid == blockedUserId);
+        allow list: if isOwner(userId);
+        allow create, update, delete: if isOwner(userId);
       }
 
       match /reports/{reportId} {
@@ -292,6 +311,7 @@ service cloud.firestore {
         && request.resource.data.fromUid == request.auth.uid
         && request.resource.data.toUid is string
         && request.resource.data.toUid != request.auth.uid
+        && noBlockBetween(request.auth.uid, request.resource.data.toUid)
         && request.resource.data.status == 'pending'
         && requestId == request.resource.data.fromUid + '_' + request.resource.data.toUid;
 
@@ -304,6 +324,7 @@ service cloud.firestore {
         && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
 
       allow update: if signedIn()
+        && noBlockBetween(resource.data.fromUid, resource.data.toUid)
         && request.resource.data.fromUid == resource.data.fromUid
         && request.resource.data.toUid == resource.data.toUid
         && requestId == resource.data.fromUid + '_' + resource.data.toUid
@@ -364,6 +385,7 @@ service cloud.firestore {
             !isGroupChat(request.resource.data)
             && request.resource.data.participants.size() == 2
             && request.resource.data.participants[0] != request.resource.data.participants[1]
+            && noBlockBetween(request.resource.data.participants[0], request.resource.data.participants[1])
             && conversationId == (
               request.resource.data.participants[0] < request.resource.data.participants[1]
                 ? request.resource.data.participants[0] + '_' + request.resource.data.participants[1]
@@ -401,19 +423,50 @@ service cloud.firestore {
             && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['hiddenLastMessageFor'])
               || ownMapKeyChanged('hiddenLastMessageFor')))
           ||
-          // Mute and pin are private per-member array entries.
+          // Mute and pin are private per-member preferences. Mute can expire at a timestamp or be indefinite (null).
           (request.resource.data.participants == resource.data.participants
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['mutedBy', 'pinnedBy'])
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['mutedBy', 'pinnedBy', 'muteUntil'])
             && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['mutedBy'])
               || onlyOwnArrayItemChanged('mutedBy'))
             && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['pinnedBy'])
-              || onlyOwnArrayItemChanged('pinnedBy')))
+              || onlyOwnArrayItemChanged('pinnedBy'))
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['muteUntil'])
+              || ownMapKeyChanged('muteUntil')))
           ||
           (request.resource.data.participants == resource.data.participants
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['disappearingSeconds'])
-            && (!isGroupChat(resource.data) || isGroupAdminData(resource.data))
+            && isGroupChat(resource.data) && isGroupAdminData(resource.data)
             && request.resource.data.disappearingSeconds is number
-            && request.resource.data.disappearingSeconds in [0, 3600, 86400, 604800])
+            && request.resource.data.disappearingSeconds in [0, 86400, 604800, 7776000])
+          ||
+          // PERSONAL disappearing messages: each member only writes their own key (any chat type).
+          (request.resource.data.participants == resource.data.participants
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['disappearingBy'])
+            && ownMapKeyChanged('disappearingBy'))
+          ||
+          // MUTUAL disappearing messages in private chats: a request is sent by one person and the
+          // timer only becomes shared when the OTHER person accepts that exact request.
+          (request.resource.data.participants == resource.data.participants
+            && !isGroupChat(resource.data)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['disappearingBy', 'disappearingRequest', 'disappearingSeconds'])
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['disappearingBy'])
+              || ownMapKeyChanged('disappearingBy'))
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['disappearingSeconds'])
+              || (request.resource.data.disappearingSeconds is number
+                && request.resource.data.disappearingSeconds in [0, 86400, 604800, 7776000]
+                && (request.resource.data.disappearingSeconds == 0
+                  || (resource.data.get('disappearingRequest', null) != null
+                    && resource.data.disappearingRequest.status == 'pending'
+                    && resource.data.disappearingRequest.from != request.auth.uid
+                    && request.resource.data.disappearingSeconds == resource.data.disappearingRequest.seconds))))
+            && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['disappearingRequest'])
+              || (request.resource.data.disappearingRequest.from == request.auth.uid
+                && request.resource.data.disappearingRequest.status in ['pending', 'cancelled']
+                && request.resource.data.disappearingRequest.seconds in [0, 86400, 604800, 7776000])
+              || (resource.data.get('disappearingRequest', null) != null
+                && resource.data.disappearingRequest.from != request.auth.uid
+                && request.resource.data.disappearingRequest.from == resource.data.disappearingRequest.from
+                && request.resource.data.disappearingRequest.status in ['accepted', 'rejected'])))
           ||
           // Group info uses the stored role/permission data, never a browser role claim.
           (request.resource.data.participants == resource.data.participants
@@ -442,6 +495,11 @@ service cloud.firestore {
             && request.resource.data.admins.size() > 0
             && (!resource.data.admins.hasAny([resource.data.createdBy])
               || request.resource.data.admins.hasAny([resource.data.createdBy])))
+          ||
+          // Per-chat theme preferences are private to the member changing their own map key.
+          (request.resource.data.participants == resource.data.participants
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['chatThemeBy'])
+            && ownMapKeyChanged('chatThemeBy'))
           ||
           (request.resource.data.participants == resource.data.participants
             && isGroupChat(resource.data)
@@ -492,19 +550,15 @@ service cloud.firestore {
           && (
             (
               isChatParticipant(conversationId)
+              && directChatAllowsMessage(conversationId)
               && (!isGroupChat(chatData(conversationId))
                 || chatData(conversationId).get('onlyAdminsCanMessage', false) != true
                 || isGroupAdminData(chatData(conversationId)))
             )
-            ||
-            // Backward-compatible first direct message; the repaired client
-            // creates the canonical parent before reaching this branch.
-            (!chatExists(conversationId)
-              && (conversationId.matches('^' + request.auth.uid + '_.*$')
-                || conversationId.matches('^.*_' + request.auth.uid + '$')))
           );
 
         allow update: if isChatParticipant(conversationId)
+          && directChatAllowsMessage(conversationId)
           && (
             (
               resource.data.senderId == request.auth.uid
@@ -558,12 +612,26 @@ service cloud.firestore {
       }
     }
 
+    // Central report inbox. Reporters can submit but cannot read or alter moderation records.
+    match /reports/{reportId} {
+      allow create: if signedIn()
+        && request.resource.data.reporterUid == request.auth.uid
+        && request.resource.data.targetUid is string
+        && request.resource.data.targetUid != request.auth.uid
+        && request.resource.data.targetType in ['user', 'group']
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() <= 1000
+        && request.resource.data.status == 'submitted';
+      allow read, update, delete: if false;
+    }
+
     // CALLS
     match /calls/{callId} {
       allow create: if signedIn()
         && request.resource.data.offer.callerId == request.auth.uid
         && request.resource.data.offer.receiverId is string
-        && request.resource.data.offer.receiverId != request.auth.uid;
+        && request.resource.data.offer.receiverId != request.auth.uid
+        && noBlockBetween(request.auth.uid, request.resource.data.offer.receiverId);
 
       allow get, list: if signedIn()
         && (
@@ -572,6 +640,7 @@ service cloud.firestore {
         );
 
       allow update: if isCallParticipant(callId)
+        && noBlockBetween(resource.data.offer.callerId, resource.data.offer.receiverId)
         && request.resource.data.offer.callerId == resource.data.offer.callerId
         && request.resource.data.offer.receiverId == resource.data.offer.receiverId;
       allow delete: if isCallParticipant(callId);
@@ -582,5 +651,19 @@ service cloud.firestore {
         allow update, delete: if false;
       }
     }
+
+    // User-submitted safety reports. Only the reporter can create/read their own report.
+    match /reports/{reportId} {
+      allow create: if signedIn()
+        && request.resource.data.reporterUid == request.auth.uid
+        && request.resource.data.targetUid is string
+        && request.resource.data.targetUid != request.auth.uid
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() <= 1000
+        && request.resource.data.status == 'submitted';
+      allow get, list: if signedIn() && resource.data.reporterUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
   }
 }

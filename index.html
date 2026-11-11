@@ -5,15 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="X-UA-Compatible" content="ie=edge">
   <title>NetChat</title>
+  <meta name="theme-color" content="#071923">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/netchat-192.png">
   <link rel="stylesheet" href="css/material-icons.css">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0">
   <!-- Google Material Symbols Outlined fallback -->
 
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=20261111a">
   
-  <link rel="stylesheet" href="netchat-upgrades.css">
-  <link rel="stylesheet" href="voice-note-fix.css">
-  <link rel="stylesheet" href="vera.css">
+  <link rel="stylesheet" href="netchat-upgrades.css?v=20261111a">
+  <link rel="stylesheet" href="voice-note-fix.css?v=20261111a">
+  <link rel="stylesheet" href="vera.css?v=20261111a">
 
 </head>
 <body>
@@ -518,6 +521,10 @@
     <button class="mi nx-t-purple" data-act="achievements"><span class="mi-ic"><span class="material-symbols-outlined">emoji_events</span></span><span class="mi-txt">Achievements</span></button>
     <button class="mi nx-t-emerald" data-act="markRead"><span class="mi-ic"><span class="material-symbols-outlined">done_all</span></span><span class="mi-txt">Mark All as Read</span></button>
     <button class="mi nx-t-blue"    data-act="linkedDevices"><span class="mi-ic"><span class="material-symbols-outlined">devices</span></span><span class="mi-txt">Linked Devices</span></button>
+    
+    
+    
+    
     <button class="mi nx-t-pink"    data-act="settings"><span class="mi-ic"><span class="material-symbols-outlined">settings</span></span><span class="mi-txt">Settings</span></button>
 </div>
 
@@ -575,6 +582,8 @@
             <button class="set-row nx-t-pink" data-action="changeProfilePicture"><span class="ic"><span class="material-symbols-outlined">photo_camera</span></span><span class="meta"><b>Change Profile Picture</b></span><span class="trail"><span class="material-symbols-outlined">chevron_right</span></span></button>
             <button class="set-row nx-t-blue" id="viewIdRow" data-action="viewNetChatID"><span class="ic"><span class="material-symbols-outlined">badge</span></span><span class="meta"><b>View NetChat ID</b><small id="settingsNetchatId"></small></span><span class="trail"><span class="material-symbols-outlined">content_copy</span></span></button>
         </div>
+
+
 
         <!-- Account -->
         <div class="set-sec nx-t-violet"><i></i>Account</div>
@@ -835,8 +844,8 @@
 </li>
       <li class="menu-item"><span class="material-symbols-outlined">search</span> Search</li>
       <li class="menu-item"><span class="material-symbols-outlined">perm_media</span> Media, links, and docs</li>
-      <li class="menu-item"><span class="material-symbols-outlined">notifications_off</span> Mute notifications</li>
-      <li class="menu-item"><span class="material-symbols-outlined">timer</span> Disappearing messages</li>
+      <li class="menu-item" id="muteChatMenuItem"><span class="material-symbols-outlined">notifications_off</span> Mute notifications</li>
+      <li class="menu-item" id="disappearingMenuItem"><span class="material-symbols-outlined">timer</span> Disappearing messages</li>
       <li class="menu-item"><span class="material-symbols-outlined">palette</span> Chat theme</li>
       <li class="menu-item" id="openMoreBtn">
         <div class="menu-item-content">
@@ -1254,14 +1263,18 @@
 
  </main>
  
-<script type="module" src="script.js"></script>
+<script>window.addEventListener("beforeinstallprompt",function(event){event.preventDefault();window.netChatDeferredInstallPrompt=event;});</script>
+<script type="module" src="script.js?v=20261111a"></script>
 
-<script type="module" src="netchat-upgrades.js"></script>
-<script src="emoji-picker-bridge.js" defer></script>
-<script src="vera-config.js"></script>
-<script type="module" src="vera.js"></script>
+<script type="module" src="netchat-upgrades.js?v=20261111a"></script>
+<script src="emoji-picker-bridge.js?v=20261111a" defer></script>
+<script src="vera-config.js?v=20261111a"></script>
+<script type="module" src="vera.js?v=20261111a"></script>
 
-<script src="menu.js"></script></body>
+<script src="menu.js?v=20261111a"></script>
+<script src="chat-menu.js?v=20261111a"></script>
+
+</body>
 </html>
 
 

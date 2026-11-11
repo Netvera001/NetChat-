@@ -57,6 +57,17 @@ function createConversationId(userA, userB) {
   return [userA, userB].sort().join("_");
 }
 
+function isChatMutedForUser(chatData, uid = window.netChatAuthUser?.uid) {
+  if (!uid || !chatData) return false;
+  const listed = Array.isArray(chatData.mutedBy) && chatData.mutedBy.includes(uid);
+  if (!listed) return false;
+  const until = chatData.muteUntil?.[uid];
+  if (until == null) return true; // null means muted indefinitely
+  const untilMs = until?.toMillis ? until.toMillis() : new Date(until).getTime();
+  return Number.isFinite(untilMs) && untilMs > Date.now();
+}
+window.netChatIsChatMuted = isChatMutedForUser;
+
 async function getSenderProfile(uid) {
   if (!uid) return { uid: "", userFullname: "NetChat User", profileImage: "" };
   if (senderProfileCache.has(uid)) return senderProfileCache.get(uid);
@@ -113,6 +124,12 @@ async function openConversation(target, conversationId, options = {}) {
   activeTargetUser = target;
   activeConversationId = isGroup ? conversationId : createConversationId(user.uid, targetUid);
   activeChatData = isGroup ? target : null;
+  if (!isGroup) {
+    const openedConversationId = activeConversationId;
+    getDoc(doc(window.netChatDB, "chats", openedConversationId)).then((snapshot) => {
+      if (snapshot.exists() && activeConversationId === openedConversationId) activeChatData = snapshot.data();
+    }).catch((error) => console.warn("Chat preferences could not be loaded:", error));
+  }
 
   const avatar = document.getElementById("chatUserAvatar");
   const name = document.getElementById("chatUserName");
@@ -132,7 +149,16 @@ async function openConversation(target, conversationId, options = {}) {
   const screen = document.getElementById("chatScreen");
   if (screen) screen.style.display = "flex";
 
+  // Resolve persistent block state before exposing conversation content or the composer.
+  const chatScreenForPrivacy = document.getElementById("chatScreen");
+  if (!isGroup && chatScreenForPrivacy) chatScreenForPrivacy.style.visibility = "hidden";
+  if (!isGroup && window.NXChatManagement?.refreshBlockState) {
+    // Keep the screen hidden only while this active conversation's privacy
+    // status is checked. A missing startup context is handled as a no-op.
+    try { await window.NXChatManagement.refreshBlockState(); } catch (error) { console.warn("Block-state refresh failed:", error); }
+  }
   listenToConversationMessages(activeConversationId);
+  if (chatScreenForPrivacy) chatScreenForPrivacy.style.visibility = "visible";
   if (isGroup) {
     window.dispatchEvent(new CustomEvent("netchat:group-open", { detail: { conversationId: activeConversationId, chat: target } }));
   } else {
@@ -141,6 +167,7 @@ async function openConversation(target, conversationId, options = {}) {
     listenToUserPresence(targetUid);
   }
   markMessagesAsRead(activeConversationId).catch((error) => console.warn("Read state could not be updated:", error));
+  window.dispatchEvent(new CustomEvent("netchat:conversation-opened", { detail: { conversationId: activeConversationId, target } }));
   if (options.focus) setTimeout(() => document.getElementById("messageInput")?.focus(), 80);
   return true;
 }
@@ -164,8 +191,11 @@ async function sendContactRequest() {
 
   if (!currentUser || !targetUser?.uid) return;
   if (currentUser.uid === targetUser.uid) return;
+  const peerUid = targetUser.theNewCreatedUser || targetUser.uid;
+  const ownBlock = await getDoc(doc(window.netChatDB, "user", currentUser.uid, "blockedUsers", peerUid)).catch(() => null);
+  if (ownBlock?.exists()) { toast("Unblock this contact before sending a contact request"); return; }
 
-  const requestId = createContactRequestId(currentUser.uid, targetUser.uid);
+  const requestId = createContactRequestId(currentUser.uid, peerUid);
   const requestRef = doc(window.netChatDB, "contactRequests", requestId);
   const existingRequest = await getDoc(requestRef);
 
@@ -176,7 +206,7 @@ async function sendContactRequest() {
 
   await setDoc(requestRef, {
     fromUid: currentUser.uid,
-    toUid: targetUser.uid,
+    toUid: peerUid,
     status: "pending",
     createdAt: serverTimestamp(),
     respondedAt: null
@@ -185,7 +215,7 @@ async function sendContactRequest() {
   const systemInboxRef = doc(
     window.netChatDB,
     "systemInbox",
-    targetUser.uid,
+    peerUid,
     "items",
     requestId
   );
@@ -625,17 +655,37 @@ function listenToConversationMessages(conversationId) {
   const messagesRef = collection(window.netChatDB, "chats", conversationId, "messages");
   const messagesQuery = query(messagesRef, orderBy("timestamp", "asc"));
   let renderRevision = 0;
+  let chatDocState; // undefined = not loaded yet, null = document missing
+  let lastSnapshot = null;
 
   const renderSnapshot = async (snapshot, options = {}) => {
     const revision = ++renderRevision;
+    lastSnapshot = snapshot;
     const chatMessagesBody = document.getElementById("chatMessagesBody");
     if (!chatMessagesBody) return;
+    // A blocked-state panel takes precedence over message snapshots.
+    if (chatMessagesBody.querySelector(".nx-blocked-panel")) return;
     const myUid = window.netChatAuthUser?.uid;
     const isGroup = activeTargetUser?.isGroup === true || activeTargetUser?.type === "group";
+    let chatState = chatDocState;
+    if (chatState === undefined) {
+      try { const stateSnap = await getDoc(doc(window.netChatDB, "chats", conversationId)); chatState = stateSnap.exists() ? stateSnap.data() : null; }
+      catch (error) { console.warn("Per-user chat settings could not be loaded:", error); chatState = null; }
+    }
+    const clearedAt = chatState?.clearedFor?.[myUid];
+    const clearedBeforeMs = clearedAt?.toMillis ? clearedAt.toMillis() : (clearedAt ? new Date(clearedAt).getTime() : 0);
+    // Personal disappearing messages: hides messages only for this user, based on each message timestamp.
+    const personalTimer = chatState?.disappearingBy?.[myUid] || {};
+    const personalMs = Number(personalTimer.seconds || 0) * 1000;
+    const personalSince = Number(personalTimer.since || 0);
     const visibleDocs = snapshot.docs.filter((messageDoc) => {
       const messageData = messageDoc.data();
       const expiryMs = messageData.expiresAt?.toMillis ? messageData.expiresAt.toMillis() : (messageData.expiresAt ? new Date(messageData.expiresAt).getTime() : 0);
-      return !(Array.isArray(messageData.hiddenFor) && messageData.hiddenFor.includes(myUid)) && !(expiryMs && expiryMs <= Date.now());
+      const sentAt = messageData.timestamp?.toMillis ? messageData.timestamp.toMillis() : (messageData.timestamp ? new Date(messageData.timestamp).getTime() : 0);
+      return !(Array.isArray(messageData.hiddenFor) && messageData.hiddenFor.includes(myUid))
+        && !(expiryMs && expiryMs <= Date.now())
+        && !(clearedBeforeMs && sentAt && sentAt <= clearedBeforeMs)
+        && !(personalMs && sentAt && sentAt >= personalSince && sentAt + personalMs <= Date.now());
     });
     const messageProfiles = new Map();
     if (isGroup) {
@@ -817,10 +867,30 @@ function listenToConversationMessages(conversationId) {
     }
   };
 
-  messagesUnsubscribe = onSnapshot(messagesQuery, (snapshot) => { renderSnapshot(snapshot).catch((error) => { console.error("Message rendering failed:", error); toast("Some messages could not be displayed"); }); }, (error) => {
+  const stopMessages = onSnapshot(messagesQuery, (snapshot) => { renderSnapshot(snapshot).catch((error) => { console.error("Message rendering failed:", error); toast("Some messages could not be displayed"); }); }, (error) => {
     console.error(`NetChat message listener failed for chats/${conversationId}/messages:`, error);
     toast(`Could not load messages (${error.code || "Firestore error"}). Check chat participant rules.`);
   });
+  // Live chat document: per-user clear markers, mute, disappearing-message settings, requests and themes.
+  const stopChatDoc = onSnapshot(doc(window.netChatDB, "chats", conversationId), (chatSnapshot) => {
+    if (activeConversationId !== conversationId) return;
+    const data = chatSnapshot.exists() ? chatSnapshot.data({ serverTimestamps: "estimate" }) : null;
+    chatDocState = data;
+    window.netChatActiveChatDoc = data;
+    window.netChatActiveChatDocId = conversationId;
+    if (data && activeChatData) Object.assign(activeChatData, data);
+    window.dispatchEvent(new CustomEvent("netchat:chatdoc", { detail: { conversationId, data } }));
+    if (lastSnapshot) renderSnapshot(lastSnapshot, { preserveScroll: true }).catch((error) => console.warn("Re-render after chat settings change failed:", error));
+  }, (error) => { chatDocState = chatDocState === undefined ? null : chatDocState; console.warn("Chat settings listener failed:", error); });
+  // Re-evaluate disappearing-message timers while the chat is open.
+  const expiryTimer = setInterval(() => {
+    if (activeConversationId !== conversationId || !lastSnapshot) return;
+    const mine = chatDocState?.disappearingBy?.[window.netChatAuthUser?.uid]?.seconds > 0;
+    if (mine || Number(chatDocState?.disappearingSeconds) > 0 || lastSnapshot.docs.some((d) => d.data().expiresAt)) {
+      renderSnapshot(lastSnapshot, { preserveScroll: true }).catch(() => {});
+    }
+  }, 30000);
+  messagesUnsubscribe = () => { stopMessages(); stopChatDoc(); clearInterval(expiryTimer); if (window.netChatActiveChatDocId === conversationId) { window.netChatActiveChatDoc = null; window.netChatActiveChatDocId = null; } };
 }
 
 let currentPresenceUnsubscribe = null;
@@ -839,8 +909,10 @@ async function listenToUserPresence(userId) {
   const userData = userSnapshot.data();
   let lastSeenPrivacy = userData.privacy?.lastSeen || "Everyone";
   if (lastSeenPrivacy === "My Contacts") {
-    const relationship = await getContactRelationship(window.netChatAuthUser.uid).catch(() => "none");
-    const theyHaveMe = await getDoc(doc(window.netChatDB, "user", userId, "contacts", window.netChatAuthUser.uid)).catch(() => null);
+    const viewerUid = window.netChatAuthUser?.uid;
+    if (!viewerUid) lastSeenPrivacy = "Nobody";
+    const relationship = viewerUid ? await getContactRelationship(viewerUid).catch(() => "none") : "none";
+    const theyHaveMe = viewerUid ? await getDoc(doc(window.netChatDB, "user", userId, "contacts", viewerUid)).catch(() => null) : null;
     if (!theyHaveMe?.exists()) lastSeenPrivacy = "Nobody";
   }
 
@@ -1208,12 +1280,12 @@ window.netChatUserReady.then(() => {
       const otherUserRef = doc(window.netChatDB, "user", otherUserId);
       const otherUserSnapshot = await getDoc(otherUserRef);
       if (!otherUserSnapshot.exists()) return null;
+      const otherUserData = { ...otherUserSnapshot.data(), ...(await getSenderProfile(otherUserId)), uid: otherUserId, isGroup: false };
+      // A user who blocked the signed-in account must not expose their profile photo in this chat list.
+      const blockedMe = await getDoc(doc(window.netChatDB, "user", otherUserId, "blockedUsers", currentUserId)).catch(() => null);
+      if (blockedMe?.exists()) otherUserData.profileImage = "default-avatar.png";
 
-      return {
-        chatId: chatDoc.id,
-        chatData,
-        otherUserData: { ...otherUserSnapshot.data(), ...(await getSenderProfile(otherUserId)), uid: otherUserId, isGroup: false }
-      };
+      return { chatId: chatDoc.id, chatData, otherUserData };
     });
 
     const resolvedChats = (await Promise.all(chatDataPromises)).filter(Boolean);
@@ -1232,7 +1304,7 @@ window.netChatUserReady.then(() => {
     resolvedChats.forEach(({ chatId, chatData, otherUserData }) => {
       const chatCard = document.createElement("div");
       chatCard.dataset.conversationId = chatId;
-      chatCard.className = `chat-card${(chatData.pinnedBy || []).includes(currentUserId) ? " is-pinned" : ""}${(chatData.mutedBy || []).includes(currentUserId) ? " is-muted" : ""}`;
+      chatCard.className = `chat-card${(chatData.pinnedBy || []).includes(currentUserId) ? " is-pinned" : ""}${isChatMutedForUser(chatData, currentUserId) ? " is-muted" : ""}`;
       chatCard.tabIndex = 0;
       chatCard.setAttribute("role", "button");
       chatCard.setAttribute("aria-label", `Open chat with ${otherUserData.userFullname || "NetChat User"}`);
@@ -1740,6 +1812,12 @@ async function sendMessagePayload(payload = {}) {
   const user = window.netChatAuthUser;
   if (!user || !activeTargetUser || !activeConversationId) { toast("Open a conversation before sending"); return false; }
   if (!messageText && !filesToUpload.length && !extra.poll) return false;
+  if (!activeTargetUser.isGroup) {
+    const peerUid = activeTargetUser.theNewCreatedUser || activeTargetUser.uid;
+    if (!peerUid) { toast("This contact is unavailable"); return false; }
+    const ownBlock = await getDoc(doc(window.netChatDB, "user", user.uid, "blockedUsers", peerUid)).catch(() => null);
+    if (ownBlock?.exists()) { toast("You blocked this contact. Unblock them before sending messages."); return false; }
+  }
   if (activeTargetUser.isGroup) {
     const chat = activeChatData || activeTargetUser;
     if (!(chat.participants || []).includes(user.uid)) { toast("You are no longer a member of this group"); return false; }
@@ -1906,6 +1984,8 @@ async function startVideoCall(withVideo = true) {
 
   const currentUserId = window.netChatAuthUser.uid;
   const targetUserId = activeTargetUser.theNewCreatedUser || activeTargetUser.uid;
+  const ownBlock = await getDoc(doc(window.netChatDB, "user", currentUserId, "blockedUsers", targetUserId)).catch(() => null);
+  if (ownBlock?.exists()) { toast("Unblock this contact before calling them"); return; }
   
   try {
     localStream = await navigator.mediaDevices.getUserMedia({ video: withVideo, audio: true });
@@ -2357,82 +2437,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 });
 
-const chatMenuBtn = document.getElementById("chatMenuBtn");
-const chatDropdown = document.getElementById("chatDropdown");
-const mainMenuView = document.getElementById("mainMenuView");
-const moreMenuView = document.getElementById("moreMenuView");
-const openMoreBtn = document.getElementById("openMoreBtn");
-const backToMainMenuBtn = document.getElementById("backToMainMenuBtn");
-
-function resetMenuView() {
-  mainMenuView.classList.remove("hidden");
-  moreMenuView.classList.add("hidden");
-}
-
-if (chatMenuBtn) {
-  chatMenuBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    const isActive = chatDropdown.classList.contains("active");
-
-    if (isActive) {
-      chatDropdown.classList.remove("active");
-      resetMenuView();
-    } else {
-      chatDropdown.classList.add("active");
-    }
-  });
-}
-
-if (openMoreBtn) {
-  openMoreBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    mainMenuView.classList.add("hidden");
-    moreMenuView.classList.remove("hidden");
-  });
-}
-
-if (backToMainMenuBtn) {
-  backToMainMenuBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    moreMenuView.classList.add("hidden");
-    mainMenuView.classList.remove("hidden");
-  });
-}
-
-document.addEventListener("click", (e) => {
-  if (!chatDropdown) return;
-  if (!chatDropdown.contains(e.target) && e.target !== chatMenuBtn) {
-    chatDropdown.classList.remove("active");
-    resetMenuView();
-  }
-});
-
-const viewContactBtn = document.getElementById("viewContactBtn");
-
-if (viewContactBtn) {
-  viewContactBtn.addEventListener("click", () => {
-    if (!activeTargetUser) return;
-    if (activeTargetUser.isGroup) { document.getElementById("groupMembersBtn")?.click(); chatDropdown?.classList.remove("active"); return; }
-
-    const modalAvatar = document.getElementById("modalUserAvatar");
-    const modalNetchatId = document.getElementById("modalNetchatId");
-    const modalUserName = document.getElementById("modalUserName");
-    const modalUserBio = document.getElementById("modalUserBio");
-    const profileModal = document.getElementById("userProfileModal");
-    const profileBackdrop = document.getElementById("profileBackdrop");
-
-    if (modalAvatar) modalAvatar.src = activeTargetUser.profileImage || "default-avatar.png";
-    if (modalNetchatId) modalNetchatId.textContent = activeTargetUser.netChatID || "";
-    if (modalUserName) modalUserName.textContent = activeTargetUser.userFullname || "NetChat User";
-    if (modalUserBio) modalUserBio.textContent = activeTargetUser.about || "No bio available yet.";
-
-    chatDropdown.classList.remove("active");
-    resetMenuView();
-
-    if (profileModal) profileModal.classList.add("active");
-    if (profileBackdrop) profileBackdrop.classList.add("active");
-  });
-}
+/* Chat dropdown interactions are owned by chat-menu.js to avoid duplicate toggles. */
 
 const filterButtons = document.querySelectorAll(".fitter-side .top-item");
 let activeChatFilter = "all";
@@ -4423,13 +4428,38 @@ document.querySelectorAll("#chatDropdown .menu-item").forEach((item) => {
 
   if (label.startsWith("Media, links")) {
     item.addEventListener("click", () => {
-      chatDropdown.classList.remove("active");
-      resetMenuView();
-      const docs = window.currentChatSnapshotDocs || [];
-      const media = [];
-      docs.forEach((d) => (d.data().media || []).forEach((m) => { if (m.url && (m.resourceType === "image" || m.resourceType === "video" || !m.resourceType)) media.push(m); }));
-      if (!media.length) return toast("No media in this chat yet");
-      openMediaFeed(media, activeTargetUser?.userFullname || "Media");
+      chatDropdown.classList.remove("active"); resetMenuView();
+      const messageDocs = window.currentChatSnapshotDocs || [];
+      const media = []; const documents = []; const links = [];
+      const urlPattern = /https?:\/\/[^\s<>()]+/gi;
+      messageDocs.forEach((messageDoc) => {
+        const data = messageDoc.data();
+        (data.media || []).forEach((file) => {
+          if (!file?.url) return;
+          const type = file.resourceType || "image";
+          if (["image", "video"].includes(type)) media.push(file);
+          else documents.push(file);
+        });
+        (String(data.text || "").match(urlPattern) || []).forEach(url => links.push({ url, text: String(data.text || "").slice(0, 100) }));
+      });
+      const choice = prompt(`Shared items in this chat:\n1 = Photos and videos (${media.length})\n2 = Links (${links.length})\n3 = Documents and audio (${documents.length})`, "1");
+      if (choice === null) return;
+      if (choice === "1") { if (!media.length) return toast("No photos or videos in this chat yet"); openMediaFeed(media, activeTargetUser?.userFullname || "Media"); return; }
+      if (choice === "2") {
+        if (!links.length) return toast("No links in this chat yet");
+        const selected = prompt(links.map((link, index) => `${index + 1}. ${link.url}`).join("\n") + "\n\nEnter a link number to open it:");
+        const index = Number(selected) - 1; if (selected === null) return;
+        if (!Number.isInteger(index) || !links[index]) return toast("Choose a valid link number");
+        window.open(links[index].url, "_blank", "noopener,noreferrer"); return;
+      }
+      if (choice === "3") {
+        if (!documents.length) return toast("No documents or audio in this chat yet");
+        const selected = prompt(documents.map((file, index) => `${index + 1}. ${file.fileName || file.name || file.resourceType || "Attachment"}`).join("\n") + "\n\nEnter an item number to open it:");
+        const index = Number(selected) - 1; if (selected === null) return;
+        if (!Number.isInteger(index) || !documents[index]) return toast("Choose a valid item number");
+        window.open(documents[index].url, "_blank", "noopener,noreferrer"); return;
+      }
+      toast("Choose 1, 2, or 3");
     });
   }
 
@@ -4439,24 +4469,51 @@ document.querySelectorAll("#chatDropdown .menu-item").forEach((item) => {
       if (!activeConversationId || !window.netChatAuthUser) return toast("Open a chat first");
       const uid = window.netChatAuthUser.uid;
       const chatRef = doc(window.netChatDB, "chats", activeConversationId);
-      const snap = await getDoc(chatRef).catch(() => null);
-      const muted = !!snap?.data()?.mutedBy?.includes?.(uid);
       try {
-        await updateDoc(chatRef, { mutedBy: muted ? (snap.data().mutedBy || []).filter(x => x !== uid) : [...(snap?.data()?.mutedBy || []), uid] });
-        toast(muted ? "Notifications unmuted" : "Notifications muted for this chat");
-      } catch (error) { toast("Could not save notification setting"); }
+        const snap = await getDoc(chatRef);
+        if (!snap.exists()) return toast("This conversation is not available");
+        const data = snap.data();
+        const muted = isChatMutedForUser(data, uid);
+        if (muted) {
+          await updateDoc(chatRef, { mutedBy: arrayRemove(uid), [`muteUntil.${uid}`]: deleteField() });
+          if (activeChatData) { activeChatData.mutedBy = (activeChatData.mutedBy || []).filter(id => id !== uid); if (activeChatData.muteUntil) delete activeChatData.muteUntil[uid]; }
+          toast("Notifications unmuted for this chat");
+          return;
+        }
+        const choice = prompt("Mute notifications for how long?\n1 = 1 hour\n2 = 8 hours\n3 = 1 week\n4 = Always", "2");
+        if (choice === null) return;
+        const durations = { "1": 3600000, "2": 8 * 3600000, "3": 7 * 86400000, "4": null };
+        if (!(choice in durations)) return toast("Choose 1, 2, 3, or 4");
+        const until = durations[choice] === null ? null : new Date(Date.now() + durations[choice]);
+        await updateDoc(chatRef, { mutedBy: arrayUnion(uid), [`muteUntil.${uid}`]: until });
+        if (activeChatData) { activeChatData.mutedBy = [...new Set([...(activeChatData.mutedBy || []), uid])]; activeChatData.muteUntil = { ...(activeChatData.muteUntil || {}), [uid]: until }; }
+        toast(choice === "4" ? "Chat muted until you unmute it" : `Chat muted for ${choice === "1" ? "1 hour" : choice === "2" ? "8 hours" : "1 week"}`);
+      } catch (error) { console.error("Mute preference save failed:", error); toast("Could not save notification setting"); }
     });
   }
   if (label.startsWith("Disappearing messages")) {
     item.addEventListener("click", async () => {
       chatDropdown.classList.remove("active"); resetMenuView();
       if (!activeConversationId) return toast("Open a chat first");
-      const choice = prompt("Disappearing messages: enter 0 to turn off, 3600 for 1 hour, 86400 for 24 hours, or 604800 for 7 days.", "86400");
+      const choice = prompt("Set expiration for NEW messages:\n0 = Off\n1 = 24 hours\n2 = 7 days\n3 = 90 days", "1");
       if (choice === null) return;
-      const seconds = Number(choice);
-      if (![0, 3600, 86400, 604800].includes(seconds)) return toast("Choose 0, 3600, 86400, or 604800 seconds");
-      try { await updateDoc(doc(window.netChatDB, "chats", activeConversationId), { disappearingSeconds: seconds }); toast(seconds ? `Disappearing messages set to ${seconds/3600} hour(s) for new messages` : "Disappearing messages turned off"); }
-      catch (error) { console.error(error); toast("Could not save disappearing-message setting"); }
+      const secondsByChoice = { "0": 0, "1": 86400, "2": 604800, "3": 7776000 };
+      if (!(choice in secondsByChoice)) return toast("Choose 0, 1, 2, or 3");
+      const seconds = secondsByChoice[choice];
+      try {
+        const chatRef = doc(window.netChatDB, "chats", activeConversationId);
+        await updateDoc(chatRef, { disappearingSeconds: seconds });
+        const duration = seconds === 86400 ? "24 hours" : seconds === 604800 ? "7 days" : seconds === 7776000 ? "90 days" : "";
+        const actor = window.netChatAuthUser?.displayName || user?.userFullname || "A participant";
+        await addDoc(collection(window.netChatDB, "chats", activeConversationId, "messages"), {
+          senderId: window.netChatAuthUser.uid,
+          text: seconds ? `${actor} turned on disappearing messages. New messages will disappear after ${duration}.` : `${actor} turned off disappearing messages.`,
+          type: "system",
+          timestamp: serverTimestamp(),
+          status: "sent"
+        });
+        toast(seconds ? `New messages will disappear after ${duration}` : "Disappearing messages turned off");
+      } catch (error) { console.error("Disappearing-message setting failed:", error); toast("Could not save disappearing-message setting or notify the conversation. Check Firestore permissions."); }
     });
   }
   // Per-conversation Chat Theme system
@@ -4503,7 +4560,8 @@ document.querySelectorAll("#chatDropdown .menu-item").forEach((item) => {
     grid.querySelectorAll("[data-chat-theme]").forEach(card => card.addEventListener("click", () => {
       const id = card.dataset.chatTheme; chatThemeStore.set(activeConversationId, id); applyChatTheme(activeConversationId, id); grid.querySelectorAll(".nc-theme-card").forEach(c => c.classList.toggle("active", c === card)); paintPreview(id); toast(`${getChatTheme(id).name} applied to this chat`);
     }));
-    document.getElementById("resetChatThemeBtn")?.addEventListener("click", () => { chatThemeStore.set(activeConversationId, "ocean"); applyChatTheme(activeConversationId, "ocean"); openChatThemePicker(); });
+    const resetThemeButton = document.getElementById("resetChatThemeBtn");
+    if (resetThemeButton) resetThemeButton.onclick = () => { chatThemeStore.set(activeConversationId, "ocean"); applyChatTheme(activeConversationId, "ocean"); openChatThemePicker(); };
     modal.hidden = false; modal.setAttribute("aria-hidden", "false");
   }
   function closeChatThemePicker() { const modal = document.getElementById("chatThemeModal"); if (!modal) return; modal.hidden = true; modal.setAttribute("aria-hidden","true"); }
@@ -4525,22 +4583,35 @@ document.querySelectorAll("#chatDropdown .menu-item").forEach((item) => {
     item.addEventListener("click", async () => {
       chatDropdown.classList.remove("active"); resetMenuView();
       const user = window.netChatAuthUser;
-      if (!user || !activeTargetUser?.uid) return toast("Open a chat before reporting");
-      const reason = prompt(activeTargetUser.isGroup ? "Why are you reporting this group? (Optional)" : "Why are you reporting this contact? (Optional)", "Spam or abuse");
+      const reportTargetUid = activeTargetUser?.uid || (activeTargetUser?.isGroup ? activeConversationId : null);
+      if (!user || !reportTargetUid) return toast("Open a chat before reporting");
+      const reportIsGroup = activeTargetUser.isGroup === true || activeTargetUser.type === "group";
+      const reason = prompt(reportIsGroup ? "Why are you reporting this group? (Optional)" : "Why are you reporting this contact? (Optional)", "Spam or abuse");
       if (reason === null) return;
-      try { await addDoc(collection(window.netChatDB, "user", user.uid, "reports"), { targetUid: activeTargetUser.uid, targetType: activeTargetUser.isGroup ? "group" : "user", targetName: activeTargetUser.userFullname || "NetChat User", reason, conversationId: activeConversationId || null, createdAt: serverTimestamp(), status: "submitted" }); toast("Report submitted"); }
-      catch (error) { console.error(error); toast("Could not submit report. Check Firestore rules."); }
+      try {
+        const report = { reporterUid: user.uid, targetUid: reportTargetUid, targetType: reportIsGroup ? "group" : "user", targetName: activeTargetUser.userFullname || "NetChat User", reason: String(reason || "").trim().slice(0, 1000), conversationId: activeConversationId || null, createdAt: serverTimestamp(), status: "submitted" };
+        await addDoc(collection(window.netChatDB, "reports"), report);
+        await addDoc(collection(window.netChatDB, "user", user.uid, "reports"), { ...report, reportRef: "reports" });
+        toast("Report submitted successfully");
+      } catch (error) { console.error("Report submission failed:", error); toast("Could not submit report. Check the deployed Firestore rules."); }
     });
   }
   if (label.startsWith("Block")) {
     item.addEventListener("click", async () => {
       chatDropdown.classList.remove("active"); resetMenuView();
       const user = window.netChatAuthUser;
-      if (!user || !activeTargetUser?.uid || activeTargetUser.isGroup) return toast("Open an individual contact chat first");
-      const shouldBlock = confirm(`Block ${activeTargetUser.userFullname || "this contact"}? You can manage blocked users in Settings → Privacy.`);
+      const blockedUid = activeTargetUser?.theNewCreatedUser || activeTargetUser?.uid;
+      const blockTargetIsGroup = activeTargetUser?.isGroup === true || activeTargetUser?.type === "group";
+      if (!user || !blockedUid || blockTargetIsGroup) return toast("Open an individual contact chat first");
+      const shouldBlock = confirm(`Block ${activeTargetUser.userFullname || "this contact"}? They will not be able to send you messages, and you will not be able to send them messages.`);
       if (!shouldBlock) return;
-      try { await setDoc(doc(window.netChatDB, "user", user.uid, "blockedUsers", activeTargetUser.uid), { uid: activeTargetUser.uid, userFullname: activeTargetUser.userFullname || "NetChat User", profileImage: activeTargetUser.profileImage || "", blockedAt: serverTimestamp() }); toast("Contact blocked"); }
-      catch (error) { console.error(error); toast("Could not block contact. Check Firestore rules."); }
+      try {
+        await setDoc(doc(window.netChatDB, "user", user.uid, "blockedUsers", blockedUid), { uid: blockedUid, userFullname: activeTargetUser.userFullname || "NetChat User", profileImage: activeTargetUser.profileImage || "", blockedAt: serverTimestamp() });
+        toast("Contact blocked. Messaging in either direction is now denied by Firestore rules.");
+        if (messagesUnsubscribe) { messagesUnsubscribe(); messagesUnsubscribe = null; }
+        activeConversationId = null; activeTargetUser = null; activeChatData = null;
+        const chatScreen = document.getElementById("chatScreen"); if (chatScreen) chatScreen.style.display = "none";
+      } catch (error) { console.error("Block failed:", error); toast("Could not block contact. Check the deployed Firestore rules."); }
     });
   }
   if (label.startsWith("Export chat")) {
@@ -4550,26 +4621,52 @@ document.querySelectorAll("#chatDropdown .menu-item").forEach((item) => {
       try {
         const snap = await getDocs(query(collection(window.netChatDB, "chats", activeConversationId, "messages"), orderBy("timestamp", "asc")));
         const payload = snap.docs.map(d => ({ id: d.id, ...d.data(), timestamp: d.data().timestamp?.toDate?.().toISOString?.() || null }));
-        const blob = new Blob([JSON.stringify({ conversationId: activeConversationId, exportedAt: new Date().toISOString(), messages: payload }, null, 2)], { type: "application/json" });
-        const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `netchat-${activeConversationId}-export.json`; a.click(); URL.revokeObjectURL(url); toast("Chat export downloaded");
+        const blob = new Blob([JSON.stringify({ conversationId: activeConversationId, conversationName: activeTargetUser?.userFullname || activeTargetUser?.groupName || "NetChat conversation", exportedAt: new Date().toISOString(), messageCount: payload.length, messages: payload }, null, 2)], { type: "application/json;charset=utf-8" });
+        const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `netchat-${activeConversationId}-export.json`; a.style.display = "none"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1500); toast(`Export prepared (${payload.length} messages)`);
       } catch (error) { console.error(error); toast("Could not export chat"); }
     });
   }
   if (label.startsWith("Add shortcut")) {
-    item.addEventListener("click", () => { chatDropdown.classList.remove("active"); resetMenuView(); toast("Use your browser menu → Add to Home screen. NetChat cannot install a shortcut without the browser prompt."); });
+    item.addEventListener("click", async () => {
+      chatDropdown.classList.remove("active"); resetMenuView();
+      const installEvent = window.netChatDeferredInstallPrompt;
+      if (installEvent) {
+        try { await installEvent.prompt(); const result = await installEvent.userChoice; window.netChatDeferredInstallPrompt = null; toast(result?.outcome === "accepted" ? "NetChat added to your home screen" : "Home-screen installation was cancelled"); }
+        catch (error) { console.error("PWA install prompt failed:", error); toast("Open your browser menu and choose Install app or Add to Home screen"); }
+      } else {
+        toast("To add NetChat: open your browser menu and choose Install app or Add to Home screen. This option appears when the site is served over HTTPS and meets install requirements.");
+      }
+    });
   }
   if (label.startsWith("Add to list")) {
     item.addEventListener("click", async () => {
       chatDropdown.classList.remove("active"); resetMenuView();
-      if (!activeConversationId || !window.netChatAuthUser) return;
+      if (!activeConversationId || !window.netChatAuthUser) return toast("Open a chat first");
+      const uid = window.netChatAuthUser.uid;
       try {
-        const uid = window.netChatAuthUser.uid;
-        const chatRef = doc(window.netChatDB, "chats", activeConversationId);
-        const snap = await getDoc(chatRef);
-        const next = snap.data()?.favorites?.[uid] !== true;
-        await updateDoc(chatRef, { [`favorites.${uid}`]: next });
-        toast(next ? "Added to favourites" : "Removed from favourites");
-      } catch (error) { console.error(error); toast("Could not update favourites"); }
+        const listsRef = collection(window.netChatDB, "user", uid, "chatLists");
+        const listsSnap = await getDocs(listsRef);
+        const lists = listsSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => typeof x.name === "string");
+        const choices = lists.map((list, index) => `${index + 1}. ${list.name}`).join("\n");
+        const answer = prompt(`Choose a list by number, or type N to create a new list:\n${choices || "No lists yet."}\n\nN = New list`, lists.length ? "1" : "N");
+        if (answer === null) return;
+        let selectedList;
+        if (answer.trim().toLowerCase() === "n" || answer.trim() === "") {
+          const name = prompt("Name your list:")?.trim();
+          if (!name) return;
+          const listId = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || crypto.randomUUID();
+          const listRef = doc(listsRef, listId);
+          await setDoc(listRef, { name: name.slice(0, 60), conversationIds: arrayUnion(activeConversationId), updatedAt: serverTimestamp(), createdAt: serverTimestamp() }, { merge: true });
+          selectedList = name;
+        } else {
+          const index = Number(answer) - 1;
+          if (!Number.isInteger(index) || index < 0 || index >= lists.length) return toast("Choose a valid list number or N");
+          const list = lists[index];
+          await updateDoc(doc(listsRef, list.id), { conversationIds: arrayUnion(activeConversationId), updatedAt: serverTimestamp() });
+          selectedList = list.name;
+        }
+        toast(`Conversation added to “${selectedList}”`);
+      } catch (error) { console.error("Add to list failed:", error); toast("Could not save this conversation to your list. Check Firestore rules."); }
     });
   }
 });
@@ -4890,11 +4987,114 @@ document.addEventListener("keydown", (e) => {
     });
   }
   async function renderBroadcast() {
-    const {user,db}=await userAndDb(); let contacts=[];
-    try {const snap=await getDocs(collection(db,"user",user.uid,"contacts"));contacts=await Promise.all(snap.docs.map(async d=>{const uid=d.data().uid||d.data().contactUid||d.id;const p=await getDoc(doc(db,"user",uid));return p.exists()?{uid,...p.data()}:null;}));contacts=contacts.filter(Boolean);}catch(e){}
-    featureBody.innerHTML=`<div class="nc-hero"><div class="nc-hero-icon">${icon("campaign")}</div><div><h3>Broadcast message</h3><p>Send the same message individually to selected contacts.</p></div></div><form id="ncBroadcastForm" class="nc-form"><label>Message<textarea name="message" required maxlength="2000" placeholder="Write your broadcast message…"></textarea></label><div class="nc-contact-list">${contacts.length?contacts.map(c=>`<label class="nc-contact"><input type="checkbox" name="member" value="${safe(c.uid)}"><img src="${safe(c.profileImage||"default-avatar.png")}" alt=""><span><b>${safe(c.userFullname||"NetChat User")}</b><small>${safe(c.netChatID||c.uid)}</small></span></label>`).join(""):empty("No contacts available","Add contacts before sending a broadcast.")}</div><button class="nc-btn" type="submit">${icon("send")} Send broadcast</button></form>`;
-    featureBody.querySelector("#ncBroadcastForm").addEventListener("submit",async e=>{e.preventDefault();const form=e.currentTarget;const message=String(new FormData(form).get("message")||"").trim();const selected=[...form.querySelectorAll('input[name="member"]:checked')].map(x=>x.value);if(!message||!selected.length)return featureToast("Choose contacts and enter a message");let sent=0;for(const uid of selected){try{const chatId=[user.uid,uid].sort().join("_");const chatRef=doc(db,"chats",chatId);await addDoc(collection(chatRef,"messages"),{senderId:user.uid,text:message,media:[],timestamp:serverTimestamp(),status:"sent",broadcast:true});await setDoc(chatRef,{participants:[user.uid,uid],lastMessage:message,lastMessageSenderId:user.uid,lastMessageAt:serverTimestamp(),lastMessageStatus:"sent",unreadCount:{[uid]:increment(1),[user.uid]:0}},{merge:true});sent++;}catch(err){console.error("Broadcast delivery failed",uid,err);}}featureToast(`Sent to ${sent} of ${selected.length} contacts`);if(sent)await window.netChatTrackAchievementEvent?.("message");});
+    const { user, db } = await userAndDb();
+    let contacts = [];
+    try {
+      const snap = await getDocs(collection(db, "user", user.uid, "contacts"));
+      contacts = await Promise.all(snap.docs.map(async (contactDoc) => {
+        const uid = contactDoc.data().uid || contactDoc.data().contactUid || contactDoc.id;
+        if (!uid || uid === user.uid) return null;
+        const profileSnap = await getDoc(doc(db, "user", uid));
+        if (!profileSnap.exists()) return null;
+        const blockedSnap = await getDoc(doc(db, "user", user.uid, "blockedUsers", uid)).catch(() => null);
+        return { uid, ...profileSnap.data(), blocked: !!blockedSnap?.exists() };
+      }));
+      contacts = contacts.filter(Boolean);
+    } catch (error) { console.warn("Broadcast contacts could not be loaded:", error); }
+
+    featureBody.innerHTML = `<div class="nc-hero"><div class="nc-hero-icon">${icon("campaign")}</div><div><h3>Broadcast message</h3><p>Send the same message individually to selected contacts.</p></div></div><form id="ncBroadcastForm" class="nc-form"><label>Message<textarea name="message" required maxlength="2000" placeholder="Write your broadcast message…"></textarea></label><div class="nc-contact-list">${contacts.length ? contacts.map(c => `<label class="nc-contact"><input type="checkbox" name="member" value="${safe(c.uid)}" ${c.blocked ? "disabled" : ""}><img src="${safe(c.profileImage || "default-avatar.png")}" alt=""><span><b>${safe(c.userFullname || "NetChat User")}</b><small>${safe(c.netChatID || c.uid)}${c.blocked ? " · You blocked this contact" : ""}</small></span></label>`).join("") : empty("No contacts available", "Add contacts before sending a broadcast.")}</div><button class="nc-btn" type="submit">${icon("send")} Send broadcast</button><p class="nc-note" id="ncBroadcastStatus" aria-live="polite"></p></form>`;
+
+    featureBody.querySelector("#ncBroadcastForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const message = String(new FormData(form).get("message") || "").trim();
+      const selected = [...form.querySelectorAll('input[name="member"]:checked')].map(input => input.value);
+      if (!message || !selected.length) return featureToast("Choose contacts and enter a message");
+      const submit = form.querySelector('button[type="submit"]');
+      const status = form.querySelector("#ncBroadcastStatus");
+      const originalLabel = submit.innerHTML;
+      submit.disabled = true;
+      let sent = 0;
+      const failures = [];
+      for (let index = 0; index < selected.length; index++) {
+        const peerUid = selected[index];
+        if (!peerUid || peerUid === user.uid) continue;
+        if (status) status.textContent = `Sending ${index + 1} of ${selected.length}…`;
+        try {
+          // Respect the sender's own block list before touching this conversation.
+          const ownBlock = await getDoc(doc(db, "user", user.uid, "blockedUsers", peerUid));
+          if (ownBlock.exists()) throw new Error("Contact is blocked by you");
+          const chatId = [user.uid, peerUid].sort().join("_");
+          const chatRef = doc(db, "chats", chatId);
+          let chatSnap = await getDoc(chatRef);
+          if (chatSnap.exists()) {
+            const participants = chatSnap.data().participants || [];
+            if (!participants.includes(user.uid) || !participants.includes(peerUid) || participants.length !== 2) {
+              throw new Error("Existing conversation participants do not match this contact");
+            }
+          } else {
+            // Create the canonical parent first; message rules require membership.
+            const participants = [user.uid, peerUid].sort();
+            await setDoc(chatRef, {
+              participants,
+              unreadCount: { [user.uid]: 0, [peerUid]: 0 },
+              lastMessage: "",
+              lastMessageSenderId: user.uid,
+              lastMessageAt: serverTimestamp(),
+              lastMessageStatus: "sent",
+              createdAt: serverTimestamp()
+            });
+            chatSnap = await getDoc(chatRef);
+          }
+          
+          
+                    let messageRef;
+          try {
+            messageRef = await addDoc(collection(chatRef, "messages"), {
+              senderId: user.uid, text: message, media: [], timestamp: serverTimestamp(),
+              status: "sent", broadcast: true, clientId: crypto.randomUUID()
+            });
+          } catch (firstError) {
+            // Older deployed rules may not whitelist 'broadcast'/'clientId' — retry minimal.
+            messageRef = await addDoc(collection(chatRef, "messages"), {
+              senderId: user.uid, text: message, media: [], timestamp: serverTimestamp(), status: "sent"
+            });
+          }
+          const previewUpdate = {
+            lastMessage: message,
+            lastMessageSenderId: user.uid,
+            lastMessageAt: serverTimestamp(),
+            lastMessageStatus: "sent",
+            lastMessageId: messageRef.id,
+            [`unreadCount.${peerUid}`]: increment(1)
+          };
+          try {
+            await updateDoc(chatRef, previewUpdate);
+          } catch (updateError) {
+            // Older rules may not whitelist 'lastMessageId' — retry without it.
+            delete previewUpdate.lastMessageId;
+            await updateDoc(chatRef, previewUpdate);
+          }
+          sent++;
+
+        }          catch (error) {
+          console.error("Broadcast delivery failed", peerUid, error);
+          const msg = error?.code === "permission-denied"
+            ? "Blocked by recipient or outdated rules"
+            : (error?.message || "Delivery failed");
+          failures.push({ uid: peerUid, message: msg });
+        }
+
+      }
+      submit.disabled = false;
+      submit.innerHTML = originalLabel;
+      if (status) status.textContent = `Delivered to ${sent} of ${selected.length}. ${failures.length ? `${failures.length} failed.` : "All selected contacts received the broadcast."}`;
+      featureToast(`Broadcast sent to ${sent} of ${selected.length} contacts${failures.length ? ` · ${failures.length} failed` : ""}`);
+      if (failures.length) console.warn("Broadcast failures:", failures);
+      if (sent) await window.netChatTrackAchievementEvent?.("message");
+    });
   }
+
   async function renderStarred() {
     const {user,db}=await userAndDb(); let chats=[]; try{const snap=await getDocs(query(collection(db,"chats"),where("participants","array-contains",user.uid)));chats=snap.docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.groupDeleted!==true);}catch(e){}
     let messages=[]; for(const chat of chats){try{const snap=await getDocs(collection(db,"chats",chat.id,"messages"));snap.docs.forEach(d=>{const m=d.data();if(m.starred===true||m.starredBy?.includes?.(user.uid)||(m.stars?.[user.uid]===true))messages.push({id:d.id,chatId:chat.id,...m});});}catch(e){}}
@@ -5095,3 +5295,29 @@ if (fabBtn) {
     isDragging = false;
   });
 }
+
+// Progressive Web App install support for the chat-menu "Add shortcut" action.
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeinstallprompt", (event) => { event.preventDefault(); window.netChatDeferredInstallPrompt = event; });
+  window.addEventListener("appinstalled", () => { window.netChatDeferredInstallPrompt = null; toast("NetChat installed successfully"); });
+  if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
+    window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(error => console.warn("NetChat service worker registration failed:", error)));
+  }
+}
+
+/* ---- bridge for chat-menu.js ---- */
+window.NX = window.NX || {};
+Object.assign(window.NX, {
+  db: window.netChatDB || (typeof db !== "undefined" ? db : null),
+  getUser: () => (typeof user !== "undefined" ? user : null),
+  userAndDb: (typeof userAndDb !== "undefined") ? userAndDb : null,
+  toast: (typeof featureToast !== "undefined") ? featureToast : null,
+  openChat: (typeof openChat !== "undefined") ? openChat : null,
+  fns: {
+    getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, doc, collection, getDocs,
+    serverTimestamp, increment, arrayUnion, arrayRemove, deleteField
+  }
+});
+Object.defineProperty(window.NX, "activeChatId", {
+  get: () => (typeof activeConversationId !== "undefined" ? activeConversationId : null)
+});

@@ -1,0 +1,26 @@
+{
+  "id": "./index.html",
+  "name": "NetChat",
+  "short_name": "NetChat",
+  "description": "Private messaging with NetChat",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#071923",
+  "theme_color": "#071923",
+  "icons": [
+    {
+      "src": "./icons/netchat-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/netchat-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

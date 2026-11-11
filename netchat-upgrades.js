@@ -135,7 +135,7 @@ function watchGroupTyping() {
     const values = snapshot.val() || {};
     groupTypingNames = Object.entries(values).filter(([uid, value]) => uid !== me() && (state.chatData?.participants || []).includes(uid) && (value === true || (value?.active === true && Date.now() - Number(value.updatedAt || 0) < 6000))).map(([uid]) => uid);
     paintGroupTyping();
-    if (groupTypingNames.length && Date.now() - lastSound > 8000) { playSound("typing"); lastSound = Date.now(); }
+    if (groupTypingNames.length && Date.now() - lastSound > 8000 && !window.netChatIsChatMuted?.(state.chatData, me())) { playSound("typing"); lastSound = Date.now(); }
   }, (error) => console.warn("Group typing unavailable:", error));
 }
 
@@ -145,6 +145,7 @@ function openGroup(conversationId, initialChat) {
   state.unsubscribe = onSnapshot(doc(window.netChatDB, "chats", conversationId), async (snapshot) => {
     if (!snapshot.exists()) { notify("This group is no longer available"); $("#closeChatBtn")?.click(); return; }
     state.chatData = snapshot.data();
+    window.netChatUpdateActiveChat?.(state.chatData);
     await loadMemberProfiles(state.chatData.participants || []);
     paintGroupStatus();
     if (sheet?.classList.contains("show")) renderGroupInfo();
@@ -330,7 +331,10 @@ async function openMemberActions(uid) {
   const targetAdmin = (data.admins || []).includes(uid);
   let contact = null;
   try { contact = await getDoc(doc(window.netChatDB, "user", me(), "contacts", uid)); } catch {}
+  
   const modal = actionSheet(profile.userFullname || "NetChat User", profile.netChatID || "NetChat member", `<div class="nx-profile-hero"><img src="${esc(profile.profileImage || "default-avatar.png")}" alt=""><p>${esc(profile.about || "No bio available yet.")}</p></div><div class="nx-action-list"><button data-member-action="profile">${icon("person")}View profile</button><button data-member-action="message">${icon("chat_bubble")}Message privately</button>${contact?.exists() ? "" : `<button data-member-action="contact">${icon("person_add")}Add to contacts</button>`}<button data-member-action="voice">${icon("call")}Voice call</button><button data-member-action="video">${icon("videocam")}Video call</button><button data-member-action="mute">${icon("notifications_off")}Mute private chat</button>${admin && !targetOwner ? `<button data-member-action="role">${icon(targetAdmin ? "remove_moderator" : "admin_panel_settings")}${targetAdmin ? "Remove admin" : "Make admin"}</button><button class="danger" data-member-action="remove">${icon("person_remove")}Remove from group</button>` : ""}</div>`);
+  
+  
   modal.root.addEventListener("click", async (event) => {
     const button = event.target.closest("[data-member-action]"); if (!button) return;
     const action = button.dataset.memberAction; button.disabled = true;
@@ -820,7 +824,8 @@ window.addEventListener("netchat:messages-rendered", (event) => {
   const currentIds = new Set(snapshot.docs.map((item) => item.id));
   const hadPrevious = renderedConversationIds.has(conversationId);
   const previous = renderedConversationIds.get(conversationId) || new Set();
-  const muted = (active?.target?.mutedBy || []).includes(me());
+  const muteData = active?.chatData || active?.target || {};
+  const muted = window.netChatIsChatMuted ? window.netChatIsChatMuted(muteData, me()) : (muteData.mutedBy || []).includes(me());
   if (hadPrevious && !muted && !snapshot.metadata.fromCache) {
     snapshot.docChanges().forEach((change) => { if (change.type === "added" && !previous.has(change.doc.id) && change.doc.data().senderId !== me()) playSound("received"); });
   }
