@@ -286,7 +286,14 @@ const database = getFirestore(app);
         event.preventDefault();
         const email = emailIn.value.trim();
         if (!validEmail(email)) { showToast('Enter your account email first'); emailIn.focus(); return; }
-        try { await sendPasswordResetEmail(auth, email); showToast('Password reset email sent ✓'); }
+        try {
+            const actionCodeSettings = {
+                url: `${window.location.origin}/auth.html?reset=complete#login`,
+                handleCodeInApp: false
+            };
+            await sendPasswordResetEmail(auth, email, actionCodeSettings);
+            showToast('Password reset email sent ✓ Check your inbox.');
+        }
         catch (error) { console.error(error); showToast('Reset email could not be sent. Check the address and try again.'); }
     });
 
