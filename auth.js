@@ -7,7 +7,8 @@ import{
     sendPasswordResetEmail,
     sendEmailVerification,
     reload,
-    signOut
+    signOut,
+    updateProfile
 } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js"
 
 import {
@@ -70,11 +71,41 @@ const database = getFirestore(app);
     }
 
     let toastTimer;
-    function showToast(msg) {
+    function showToast(msg, type = 'error') {
         toast.textContent = msg;
+        toast.classList.remove('success', 'error', 'info');
+        toast.classList.add(type);
         toast.classList.add('show');
         clearTimeout(toastTimer);
-        toastTimer = setTimeout(function () { toast.classList.remove('show'); }, 3000);
+        toastTimer = setTimeout(function () { toast.classList.remove('show'); }, 4200);
+    }
+
+    function authErrorMessage(error, action = 'general') {
+        const code = error && error.code ? error.code : '';
+        if (code === 'auth/email-already-in-use') return 'This email is already registered. Please log in or use Forgot password.';
+        if (code === 'auth/invalid-email') return 'This email address is not valid. Check it and try again.';
+        if (code === 'auth/weak-password') return 'Your password is too weak. Use at least 8 characters.';
+        if (code === 'auth/user-not-found') return action === 'reset' ? 'No NetChat account was found with this email address.' : 'No account was found with this email address.';
+        if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') return 'Email or password is incorrect.';
+        if (code === 'auth/too-many-requests') return 'Too many attempts. Please wait a little and try again.';
+        if (code === 'auth/network-request-failed' || !navigator.onLine) return 'Network error. Check your internet connection and try again.';
+        if (code === 'auth/operation-not-allowed') return 'This sign-in method is disabled in Firebase Authentication. Contact the NetChat administrator.';
+        if (code === 'auth/requires-recent-login') return 'Please log in again before continuing.';
+        if (code === 'auth/quota-exceeded') return 'The email sending limit has been reached. Please try again later.';
+        return action === 'reset' ? 'We could not send the password-reset email. Please try again.' : 'We could not complete that request. Please try again.';
+    }
+
+    function actionContinueSettings(kind) {
+        const url = new URL('auth.html', window.location.href);
+        url.searchParams.set('action', kind);
+        return { url: url.href, handleCodeInApp: false };
+    }
+
+    function setAvatarStatus(message, state = '') {
+        const status = $('avatarUploadStatus');
+        if (!status) return;
+        status.textContent = message;
+        status.className = 'avatar-upload-status' + (state ? ' ' + state : '');
     }
 
     /* ---------- live validation ---------- */
@@ -163,6 +194,9 @@ const database = getFirestore(app);
         }
 
         isAvatarUploading = true;
+        zone.classList.add('uploading');
+        zone.setAttribute('aria-busy', 'true');
+        setAvatarStatus('Uploading profile picture…', 'loading');
         profileImageUrl = '';
         profileImagePublicId = '';
 
@@ -186,14 +220,18 @@ const database = getFirestore(app);
             img.src = URL.createObjectURL(f);
             img.alt = 'Profile picture';
             $('avatarInner').replaceChildren(img);
-            showToast('Profile picture uploaded ✓');
+            setAvatarStatus('Profile picture uploaded successfully ✓', 'success');
+            showToast('Profile picture uploaded successfully.', 'success');
         } catch (error) {
             console.error('Profile picture upload failed:', error);
             profileImageUrl = '';
             profileImagePublicId = '';
-            showToast('Picture upload failed. You can try again or continue without one.');
+            setAvatarStatus('Picture upload failed. Check your connection and try again.', 'error');
+            showToast('Profile picture upload failed. Please try again.', 'error');
         } finally {
             isAvatarUploading = false;
+            zone.classList.remove('uploading');
+            zone.removeAttribute('aria-busy');
             file.value = '';
         }
     });
@@ -274,13 +312,14 @@ const database = getFirestore(app);
         const existing = await getDoc(profileRef);
         if (existing.exists()) return;
         const pendingRaw = localStorage.getItem('netchat_pending_verified_profile');
-        if (!pendingRaw) {
-            throw new Error('Your email is verified, but your pending profile details are missing. Please contact NetChat support.');
+        let pending = {};
+        if (pendingRaw) {
+            try { pending = JSON.parse(pendingRaw) || {}; } catch (_) { pending = {}; }
         }
-        let pending;
-        try { pending = JSON.parse(pendingRaw); } catch (_) { throw new Error('Pending profile data is invalid.'); }
-        const fullName = String(pending.fullName || '').trim();
-        if (fullName.length < 2 || user.email !== pending.email) throw new Error('Pending profile details do not match this account.');
+        // Firebase Auth profile metadata is a fallback if the user verifies on another device.
+        const fullName = String(pending.fullName || user.displayName || '').trim();
+        if (fullName.length < 2) throw new Error('Your email is verified, but your profile name is missing. Please contact NetChat support.');
+        if (pending.email && user.email && user.email.toLowerCase() !== String(pending.email).toLowerCase()) throw new Error('Pending profile details do not match this account.');
         let netChatID = '';
         let found = true;
         while (found) {
@@ -294,7 +333,7 @@ const database = getFirestore(app);
             userEmail: user.email,
             netChatID,
             theNewCreatedUser: user.uid,
-            profileImage: pending.profileImage || '',
+            profileImage: pending.profileImage || user.photoURL || '',
             profileImagePublicId: pending.profileImagePublicId || '',
             about: "Hi, I'm using NetChat.",
             privacy: { lastSeen: 'Everyone', pfp: 'Everyone', readReceipts: true, typing: true, grpInv: 'Everyone' }
@@ -325,46 +364,51 @@ const database = getFirestore(app);
     $('loginToggle').addEventListener('click', function (event) { event.preventDefault(); setAuthMode('login'); });
     $('forgotPassword').addEventListener('click', async function (event) {
         event.preventDefault();
-        const email = emailIn.value.trim();
-        if (!validEmail(email)) { showToast('Enter your account email first'); emailIn.focus(); return; }
+        const email = emailIn.value.trim().toLowerCase();
+        if (!validEmail(email)) { showToast('Enter your account email first.', 'error'); emailIn.focus(); return; }
+        const link = $('forgotPassword');
+        link.setAttribute('aria-busy', 'true');
         try {
-            const actionCodeSettings = {
-                url: `${window.location.origin}/auth.html?reset=complete#login`,
-                handleCodeInApp: false
-            };
-            await sendPasswordResetEmail(auth, email, actionCodeSettings);
-            showToast('Password reset email sent ✓ Check your inbox.');
+            await sendPasswordResetEmail(auth, email, actionContinueSettings('password-reset'));
+            showToast('Password-reset email sent. Check your inbox and spam folder.', 'success');
+        } catch (error) {
+            console.error('Password reset email failed:', error);
+            showToast(authErrorMessage(error, 'reset'), 'error');
+        } finally {
+            link.removeAttribute('aria-busy');
         }
-        catch (error) { console.error(error); showToast('Reset email could not be sent. Check the address and try again.'); }
     });
 
-    // Resend verification securely: authenticate again, send only for this account, then sign out.
+    // Resend only after re-authenticating the account owner.
     if (resendVerifyBtn) {
         resendVerifyBtn.addEventListener('click', async function () {
-            const emailVal = emailIn.value.trim();
+            const emailVal = emailIn.value.trim().toLowerCase();
             if (!validEmail(emailVal) || !pass.value) {
-                showToast('Enter your email and password first to resend verification.');
+                showToast('Enter the account email and password, then tap Resend verification.', 'error');
+                emailIn.focus();
                 return;
             }
             resendVerifyBtn.disabled = true;
+            resendVerifyBtn.classList.add('loading');
             try {
                 const credential = await signInWithEmailAndPassword(auth, emailVal, pass.value);
                 await reload(credential.user);
                 if (credential.user.emailVerified) {
                     await signOut(auth);
                     verifyNotice.hidden = true;
-                    showToast('Your email is already verified. You can log in now.');
+                    showToast('Your email is already verified. You can log in now.', 'success');
                 } else {
-                    await sendEmailVerification(credential.user);
+                    await sendEmailVerification(credential.user, actionContinueSettings('email-verification'));
                     await signOut(auth);
-                    showToast('A new verification email has been sent.');
+                    showToast('A fresh verification email has been sent. Check your inbox and spam folder.', 'success');
                 }
             } catch (error) {
                 console.error('Resend verification failed:', error);
                 if (auth.currentUser) { try { await signOut(auth); } catch (_) {} }
-                showToast('Could not resend verification. Check your email, password and connection.');
+                showToast(authErrorMessage(error, 'resend'), 'error');
             } finally {
                 resendVerifyBtn.disabled = false;
+                resendVerifyBtn.classList.remove('loading');
             }
         });
     }
@@ -381,11 +425,11 @@ const database = getFirestore(app);
                 const credential = await signInWithEmailAndPassword(auth, emailVal, pass.value);
                 await reload(credential.user);
                 if (!credential.user.emailVerified) {
-                    try { await sendEmailVerification(credential.user); } catch (mailError) { console.error('Verification email resend failed:', mailError); }
+                    try { await sendEmailVerification(credential.user, actionContinueSettings('email-verification')); } catch (mailError) { console.error('Verification email resend failed:', mailError); }
                     await signOut(auth);
                     verifyNoticeText.textContent = `Your email address (${emailVal}) is not verified yet. We have requested a fresh verification email. Open it and tap Verify Email, then return here to log in.`;
                     verifyNotice.hidden = false;
-                    showToast('Please verify your email before entering NetChat.');
+                    showToast('Email not verified. Check your inbox or tap Resend verification.', 'error');
                     btn.disabled = false; btn.classList.remove('loading');
                     return;
                 }
@@ -395,7 +439,7 @@ const database = getFirestore(app);
                 window.location.href = 'index.html';
             } catch (error) {
                 console.error('Login failed:', error);
-                showToast(error.code === 'auth/invalid-credential' ? 'Email or password is incorrect' : 'Could not log in. Check your connection and try again.');
+                showToast(authErrorMessage(error, 'login'), 'error');
                 btn.disabled = false; btn.classList.remove('loading');
             }
             return;
@@ -471,28 +515,49 @@ const database = getFirestore(app);
 
 
 const results = await createUserWithEmailAndPassword(auth, emailVal, pass.value);
-            await sendEmailVerification(results.user);
-            // Keep only the minimum profile fields locally until the email is verified.
-            localStorage.setItem('netchat_pending_verified_profile', JSON.stringify({
+            // Save the minimal pending profile before sending email so a mail/network
+            // failure cannot strand the newly-created Authentication account.
+            const pendingProfile = {
                 fullName: fullNameVal,
                 email: emailVal,
                 profileImage: profileImageUrl || '',
                 profileImagePublicId: profileImagePublicId || ''
-            }));
-            await signOut(auth);
+            };
+            localStorage.setItem('netchat_pending_verified_profile', JSON.stringify(pendingProfile));
+            try {
+                await updateProfile(results.user, {
+                    displayName: fullNameVal,
+                    photoURL: profileImageUrl || null
+                });
+            } catch (profileError) {
+                console.warn('Auth display profile could not be updated; local pending profile retained.', profileError);
+            }
 
-            saveRememberedEmail();
-            setAuthMode('login');
-            verifyNoticeText.textContent = `We sent a verification link to ${emailVal}. Open that email and tap Verify Email. Once verified, return to NetChat and log in.`;
-            verifyNotice.hidden = false;
-            showToast('Account created. Verify your email before signing in.');
-
-            
-            
-            
+            try {
+                await sendEmailVerification(results.user, actionContinueSettings('email-verification'));
+                await signOut(auth);
+                saveRememberedEmail();
+                setAuthMode('login');
+                verifyNoticeText.textContent = `We sent a verification link to ${emailVal}. Open it and tap Verify Email. Then return here and log in. If it does not arrive, enter your password and tap Resend verification.`;
+                verifyNotice.hidden = false;
+                showToast('Account created. Verification email sent.', 'success');
+            } catch (mailError) {
+                console.error('Account created but verification email failed:', mailError);
+                try { await signOut(auth); } catch (_) {}
+                saveRememberedEmail();
+                setAuthMode('login');
+                verifyNoticeText.textContent = `Your NetChat account was created, but the verification email could not be sent. Your account is not lost. Enter your password and tap Resend verification when your connection is ready.`;
+                verifyNotice.hidden = false;
+                showToast('Account created, but verification email failed: ' + authErrorMessage(mailError, 'resend'), 'error');
+            }
         } catch (err) {
-            console.error('Account save error:', err);
-            showToast('Something went wrong. Please try again.');
+            console.error('Account creation failed:', err);
+            if (err.code === 'auth/email-already-in-use') {
+                setAuthMode('login');
+                verifyNoticeText.textContent = `The email ${emailVal} is already registered. Log in with that email. If it is not verified, NetChat will let you resend the verification email. If you forgot the password, use Forgot password.`;
+                verifyNotice.hidden = false;
+            }
+            showToast(authErrorMessage(err, 'signup'), 'error');
         } finally {
             btn.disabled = false;
             btn.classList.remove('loading');
