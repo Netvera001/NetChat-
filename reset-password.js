@@ -1,5 +1,5 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js';
-import { getAuth, verifyPasswordResetCode, confirmPasswordReset } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js';
+import { getAuth, verifyPasswordResetCode, confirmPasswordReset, applyActionCode } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyCbwcl2SX_oogemIA4Z9pdZmhBAPXQDzA4',
@@ -32,8 +32,8 @@ function showResult(message, kind) {
 function showInvalidLink(message = 'This password-reset link is invalid, expired, or has already been used. Request a new reset email from NetChat.') {
   checking.hidden = true;
   form.hidden = true;
-  $('pageTitle').textContent = 'Reset link unavailable';
-  $('introText').textContent = 'For your security, password-reset links can only be used once and expire after a limited time.';
+  $('pageTitle').textContent = 'Action link unavailable';
+  $('introText').textContent = 'For your security, email action links can only be used once and expire after a limited time.';
   $('stateIcon').innerHTML = '<span class="material-symbols-outlined">link_off</span>';
   showResult(message, 'error');
   const link = $('backLink');
@@ -41,9 +41,25 @@ function showInvalidLink(message = 'This password-reset link is invalid, expired
   link.href = 'auth.html#login';
 }
 
-// A Firebase password-reset action must contain both mode=resetPassword and a one-time code.
-if (mode !== 'resetPassword' || !oobCode) {
-  showInvalidLink('The reset link is missing required security information. Please request a fresh password-reset email from NetChat.');
+// Firebase's custom action URL is shared by email templates, so handle both
+// password-reset and email-verification action codes on this branded page.
+if (!oobCode || !['resetPassword', 'verifyEmail'].includes(mode)) {
+  showInvalidLink('This link is missing required security information. Request a fresh email from NetChat.');
+} else if (mode === 'verifyEmail') {
+  try {
+    await applyActionCode(auth, oobCode);
+    checking.hidden = true;
+    form.hidden = true;
+    $('stateIcon').innerHTML = '<span class="material-symbols-outlined">mark_email_read</span>';
+    $('pageTitle').textContent = 'Email verified';
+    $('introText').textContent = 'Your email address has been verified successfully. You can now sign in to NetChat.';
+    showResult('Email verification complete. Your NetChat account is ready for sign-in.', 'success');
+    $('backLink').textContent = 'Continue to NetChat sign in';
+    $('backLink').href = 'auth.html#login';
+  } catch (error) {
+    console.error('Email verification failed:', error);
+    showInvalidLink('This verification link is invalid, expired, or has already been used. Request a new verification email from NetChat.');
+  }
 } else {
   try {
     verifiedEmail = await verifyPasswordResetCode(auth, oobCode);

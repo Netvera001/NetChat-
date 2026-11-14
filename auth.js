@@ -4,7 +4,10 @@ import{
     getAuth,
     createUserWithEmailAndPassword,
     signInWithEmailAndPassword,
-    sendPasswordResetEmail
+    sendPasswordResetEmail,
+    sendEmailVerification,
+    reload,
+    signOut
 } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js"
 
 import {
@@ -13,6 +16,7 @@ import {
     query,
     where,
     getDocs,
+    getDoc,
     setDoc,
     doc,
     updateDoc
@@ -48,6 +52,9 @@ const database = getFirestore(app);
     const termsBox = $('terms'), termsWrap = $('termsWrap');
     const rememberBox = $('remember');
     const toast = $('toast');
+    const verifyNotice = $('verifyNotice');
+    const verifyNoticeText = $('verifyNoticeText');
+    const resendVerifyBtn = $('resendVerifyBtn');
     const modal = $('policyModal'), modalTitle = $('modalTitle'), modalBody = $('modalBody');
 
 
@@ -261,6 +268,40 @@ const database = getFirestore(app);
         }
     })();
 
+    // Complete the profile only after Firebase confirms ownership of the email.
+    async function ensureVerifiedUserProfile(user) {
+        const profileRef = doc(database, 'user', user.uid);
+        const existing = await getDoc(profileRef);
+        if (existing.exists()) return;
+        const pendingRaw = localStorage.getItem('netchat_pending_verified_profile');
+        if (!pendingRaw) {
+            throw new Error('Your email is verified, but your pending profile details are missing. Please contact NetChat support.');
+        }
+        let pending;
+        try { pending = JSON.parse(pendingRaw); } catch (_) { throw new Error('Pending profile data is invalid.'); }
+        const fullName = String(pending.fullName || '').trim();
+        if (fullName.length < 2 || user.email !== pending.email) throw new Error('Pending profile details do not match this account.');
+        let netChatID = '';
+        let found = true;
+        while (found) {
+            const digits = Array.from({ length: 11 }, () => Math.floor(Math.random() * 10)).join('');
+            netChatID = 'NC' + digits;
+            const matches = await getDocs(query(collection(database, 'user'), where('netChatID', '==', netChatID)));
+            found = !matches.empty;
+        }
+        await setDoc(profileRef, {
+            userFullname: fullName,
+            userEmail: user.email,
+            netChatID,
+            theNewCreatedUser: user.uid,
+            profileImage: pending.profileImage || '',
+            profileImagePublicId: pending.profileImagePublicId || '',
+            about: "Hi, I'm using NetChat.",
+            privacy: { lastSeen: 'Everyone', pfp: 'Everyone', readReceipts: true, typing: true, grpInv: 'Everyone' }
+        });
+        localStorage.removeItem('netchat_pending_verified_profile');
+    }
+
     /* ---------- returning-user login and recovery ---------- */
     let authMode = 'signup';
     function setAuthMode(mode) {
@@ -297,6 +338,37 @@ const database = getFirestore(app);
         catch (error) { console.error(error); showToast('Reset email could not be sent. Check the address and try again.'); }
     });
 
+    // Resend verification securely: authenticate again, send only for this account, then sign out.
+    if (resendVerifyBtn) {
+        resendVerifyBtn.addEventListener('click', async function () {
+            const emailVal = emailIn.value.trim();
+            if (!validEmail(emailVal) || !pass.value) {
+                showToast('Enter your email and password first to resend verification.');
+                return;
+            }
+            resendVerifyBtn.disabled = true;
+            try {
+                const credential = await signInWithEmailAndPassword(auth, emailVal, pass.value);
+                await reload(credential.user);
+                if (credential.user.emailVerified) {
+                    await signOut(auth);
+                    verifyNotice.hidden = true;
+                    showToast('Your email is already verified. You can log in now.');
+                } else {
+                    await sendEmailVerification(credential.user);
+                    await signOut(auth);
+                    showToast('A new verification email has been sent.');
+                }
+            } catch (error) {
+                console.error('Resend verification failed:', error);
+                if (auth.currentUser) { try { await signOut(auth); } catch (_) {} }
+                showToast('Could not resend verification. Check your email, password and connection.');
+            } finally {
+                resendVerifyBtn.disabled = false;
+            }
+        });
+    }
+
     /* ---------- submit ---------- */
     form.addEventListener('submit', async function (e) {
         e.preventDefault();
@@ -306,7 +378,19 @@ const database = getFirestore(app);
             if (!validEmail(emailVal) || !pass.value) { showToast('Enter your email and password'); return; }
             btn.disabled = true; btn.classList.add('loading');
             try {
-                await signInWithEmailAndPassword(auth, emailVal, pass.value);
+                const credential = await signInWithEmailAndPassword(auth, emailVal, pass.value);
+                await reload(credential.user);
+                if (!credential.user.emailVerified) {
+                    try { await sendEmailVerification(credential.user); } catch (mailError) { console.error('Verification email resend failed:', mailError); }
+                    await signOut(auth);
+                    verifyNoticeText.textContent = `Your email address (${emailVal}) is not verified yet. We have requested a fresh verification email. Open it and tap Verify Email, then return here to log in.`;
+                    verifyNotice.hidden = false;
+                    showToast('Please verify your email before entering NetChat.');
+                    btn.disabled = false; btn.classList.remove('loading');
+                    return;
+                }
+                await ensureVerifiedUserProfile(credential.user);
+                verifyNotice.hidden = true;
                 saveRememberedEmail();
                 window.location.href = 'index.html';
             } catch (error) {
@@ -386,67 +470,22 @@ const database = getFirestore(app);
 
 
 
-let isNumberAlreadyExists = true;
-const results = await createUserWithEmailAndPassword(auth, emailVal, pass.value)
-
-    const theNewCreatedUser = results.user.uid
-    
-    
-    while(isNumberAlreadyExists){
-const myAppNumber = [0,1,2,3,4,5,6,7,8,9]
-    let netchat_unique_number = "";
-    for(let i = 0; i < 11; i++){
-    const netChatNumber = myAppNumber[Math.floor(Math.random() * myAppNumber.length)]
-    netchat_unique_number += netChatNumber
-    }
-    const netChatID = "NC" + netchat_unique_number
-    const checkTheGeneratedNumber = query(collection(database, "user"),
-    where("netChatID", "==", netChatID)
-    );
-    
-    const result = await getDocs(checkTheGeneratedNumber)
-if (result.empty) {
-    isNumberAlreadyExists = false;
-    
-    await setDoc(
-        doc(database, "user", theNewCreatedUser),
-        {
-            userFullname: fullNameVal,
-            userEmail: emailVal,
-            netChatID: netChatID,
-            theNewCreatedUser: results.user.uid,
-            profileImage: profileImageUrl,
-            profileImagePublicId: profileImagePublicId,
-            about: "Hi, I'm using NetChat.",
-            
-            privacy: {
-                lastSeen: "Everyone",
-                pfp: "Everyone",
-                readReceipts: true,
-                typing: true,
-                grpInv: "Everyone"
-            }
-        }
-    );
-}
-    }
-
-  
-
-
-
-
-
+const results = await createUserWithEmailAndPassword(auth, emailVal, pass.value);
+            await sendEmailVerification(results.user);
+            // Keep only the minimum profile fields locally until the email is verified.
+            localStorage.setItem('netchat_pending_verified_profile', JSON.stringify({
+                fullName: fullNameVal,
+                email: emailVal,
+                profileImage: profileImageUrl || '',
+                profileImagePublicId: profileImagePublicId || ''
+            }));
+            await signOut(auth);
 
             saveRememberedEmail();
-
-            $('doneOverlay').classList.add('show');
-
-            
-            
-            setTimeout(function () {
-    window.location.href = 'index.html';
-}, 1800);
+            setAuthMode('login');
+            verifyNoticeText.textContent = `We sent a verification link to ${emailVal}. Open that email and tap Verify Email. Once verified, return to NetChat and log in.`;
+            verifyNotice.hidden = false;
+            showToast('Account created. Verify your email before signing in.');
 
             
             
